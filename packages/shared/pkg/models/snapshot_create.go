@@ -83,9 +83,37 @@ func (sc *SnapshotCreate) SetNillableEnvSecure(b *bool) *SnapshotCreate {
 	return sc
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (sc *SnapshotCreate) SetAutoPause(b bool) *SnapshotCreate {
+	sc.mutation.SetAutoPause(b)
+	return sc
+}
+
+// SetNillableAutoPause sets the "auto_pause" field if the given value is not nil.
+func (sc *SnapshotCreate) SetNillableAutoPause(b *bool) *SnapshotCreate {
+	if b != nil {
+		sc.SetAutoPause(*b)
+	}
+	return sc
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (sc *SnapshotCreate) SetOriginNodeID(s string) *SnapshotCreate {
 	sc.mutation.SetOriginNodeID(s)
+	return sc
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (sc *SnapshotCreate) SetAllowInternetAccess(b bool) *SnapshotCreate {
+	sc.mutation.SetAllowInternetAccess(b)
+	return sc
+}
+
+// SetNillableAllowInternetAccess sets the "allow_internet_access" field if the given value is not nil.
+func (sc *SnapshotCreate) SetNillableAllowInternetAccess(b *bool) *SnapshotCreate {
+	if b != nil {
+		sc.SetAllowInternetAccess(*b)
+	}
 	return sc
 }
 
@@ -143,6 +171,10 @@ func (sc *SnapshotCreate) defaults() {
 		v := snapshot.DefaultEnvSecure
 		sc.mutation.SetEnvSecure(v)
 	}
+	if _, ok := sc.mutation.AutoPause(); !ok {
+		v := snapshot.DefaultAutoPause
+		sc.mutation.SetAutoPause(v)
+	}
 }
 
 // check runs all checks and user-defined validators on the builder.
@@ -167,6 +199,9 @@ func (sc *SnapshotCreate) check() error {
 	}
 	if _, ok := sc.mutation.EnvSecure(); !ok {
 		return &ValidationError{Name: "env_secure", err: errors.New(`models: missing required field "Snapshot.env_secure"`)}
+	}
+	if _, ok := sc.mutation.AutoPause(); !ok {
+		return &ValidationError{Name: "auto_pause", err: errors.New(`models: missing required field "Snapshot.auto_pause"`)}
 	}
 	if _, ok := sc.mutation.OriginNodeID(); !ok {
 		return &ValidationError{Name: "origin_node_id", err: errors.New(`models: missing required field "Snapshot.origin_node_id"`)}
@@ -235,9 +270,17 @@ func (sc *SnapshotCreate) createSpec() (*Snapshot, *sqlgraph.CreateSpec) {
 		_spec.SetField(snapshot.FieldEnvSecure, field.TypeBool, value)
 		_node.EnvSecure = value
 	}
+	if value, ok := sc.mutation.AutoPause(); ok {
+		_spec.SetField(snapshot.FieldAutoPause, field.TypeBool, value)
+		_node.AutoPause = value
+	}
 	if value, ok := sc.mutation.OriginNodeID(); ok {
 		_spec.SetField(snapshot.FieldOriginNodeID, field.TypeString, value)
 		_node.OriginNodeID = value
+	}
+	if value, ok := sc.mutation.AllowInternetAccess(); ok {
+		_spec.SetField(snapshot.FieldAllowInternetAccess, field.TypeBool, value)
+		_node.AllowInternetAccess = &value
 	}
 	if nodes := sc.mutation.EnvIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -381,6 +424,18 @@ func (u *SnapshotUpsert) UpdateEnvSecure() *SnapshotUpsert {
 	return u
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (u *SnapshotUpsert) SetAutoPause(v bool) *SnapshotUpsert {
+	u.Set(snapshot.FieldAutoPause, v)
+	return u
+}
+
+// UpdateAutoPause sets the "auto_pause" field to the value that was provided on create.
+func (u *SnapshotUpsert) UpdateAutoPause() *SnapshotUpsert {
+	u.SetExcluded(snapshot.FieldAutoPause)
+	return u
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (u *SnapshotUpsert) SetOriginNodeID(v string) *SnapshotUpsert {
 	u.Set(snapshot.FieldOriginNodeID, v)
@@ -390,6 +445,24 @@ func (u *SnapshotUpsert) SetOriginNodeID(v string) *SnapshotUpsert {
 // UpdateOriginNodeID sets the "origin_node_id" field to the value that was provided on create.
 func (u *SnapshotUpsert) UpdateOriginNodeID() *SnapshotUpsert {
 	u.SetExcluded(snapshot.FieldOriginNodeID)
+	return u
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (u *SnapshotUpsert) SetAllowInternetAccess(v bool) *SnapshotUpsert {
+	u.Set(snapshot.FieldAllowInternetAccess, v)
+	return u
+}
+
+// UpdateAllowInternetAccess sets the "allow_internet_access" field to the value that was provided on create.
+func (u *SnapshotUpsert) UpdateAllowInternetAccess() *SnapshotUpsert {
+	u.SetExcluded(snapshot.FieldAllowInternetAccess)
+	return u
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (u *SnapshotUpsert) ClearAllowInternetAccess() *SnapshotUpsert {
+	u.SetNull(snapshot.FieldAllowInternetAccess)
 	return u
 }
 
@@ -528,6 +601,20 @@ func (u *SnapshotUpsertOne) UpdateEnvSecure() *SnapshotUpsertOne {
 	})
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (u *SnapshotUpsertOne) SetAutoPause(v bool) *SnapshotUpsertOne {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.SetAutoPause(v)
+	})
+}
+
+// UpdateAutoPause sets the "auto_pause" field to the value that was provided on create.
+func (u *SnapshotUpsertOne) UpdateAutoPause() *SnapshotUpsertOne {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.UpdateAutoPause()
+	})
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (u *SnapshotUpsertOne) SetOriginNodeID(v string) *SnapshotUpsertOne {
 	return u.Update(func(s *SnapshotUpsert) {
@@ -539,6 +626,27 @@ func (u *SnapshotUpsertOne) SetOriginNodeID(v string) *SnapshotUpsertOne {
 func (u *SnapshotUpsertOne) UpdateOriginNodeID() *SnapshotUpsertOne {
 	return u.Update(func(s *SnapshotUpsert) {
 		s.UpdateOriginNodeID()
+	})
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (u *SnapshotUpsertOne) SetAllowInternetAccess(v bool) *SnapshotUpsertOne {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.SetAllowInternetAccess(v)
+	})
+}
+
+// UpdateAllowInternetAccess sets the "allow_internet_access" field to the value that was provided on create.
+func (u *SnapshotUpsertOne) UpdateAllowInternetAccess() *SnapshotUpsertOne {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.UpdateAllowInternetAccess()
+	})
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (u *SnapshotUpsertOne) ClearAllowInternetAccess() *SnapshotUpsertOne {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.ClearAllowInternetAccess()
 	})
 }
 
@@ -844,6 +952,20 @@ func (u *SnapshotUpsertBulk) UpdateEnvSecure() *SnapshotUpsertBulk {
 	})
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (u *SnapshotUpsertBulk) SetAutoPause(v bool) *SnapshotUpsertBulk {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.SetAutoPause(v)
+	})
+}
+
+// UpdateAutoPause sets the "auto_pause" field to the value that was provided on create.
+func (u *SnapshotUpsertBulk) UpdateAutoPause() *SnapshotUpsertBulk {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.UpdateAutoPause()
+	})
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (u *SnapshotUpsertBulk) SetOriginNodeID(v string) *SnapshotUpsertBulk {
 	return u.Update(func(s *SnapshotUpsert) {
@@ -855,6 +977,27 @@ func (u *SnapshotUpsertBulk) SetOriginNodeID(v string) *SnapshotUpsertBulk {
 func (u *SnapshotUpsertBulk) UpdateOriginNodeID() *SnapshotUpsertBulk {
 	return u.Update(func(s *SnapshotUpsert) {
 		s.UpdateOriginNodeID()
+	})
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (u *SnapshotUpsertBulk) SetAllowInternetAccess(v bool) *SnapshotUpsertBulk {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.SetAllowInternetAccess(v)
+	})
+}
+
+// UpdateAllowInternetAccess sets the "allow_internet_access" field to the value that was provided on create.
+func (u *SnapshotUpsertBulk) UpdateAllowInternetAccess() *SnapshotUpsertBulk {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.UpdateAllowInternetAccess()
+	})
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (u *SnapshotUpsertBulk) ClearAllowInternetAccess() *SnapshotUpsertBulk {
+	return u.Update(func(s *SnapshotUpsert) {
+		s.ClearAllowInternetAccess()
 	})
 }
 

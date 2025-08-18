@@ -35,10 +35,15 @@ message SandboxConfig {
   bool snapshot = 16;
   string base_template_id = 17;
 
-  optional bool auto_pause = 18;
+  bool auto_pause = 18;
 
   optional string envd_access_token = 19;
   string execution_id = 20;
+
+  // Whether the sandbox should have access to the internet.
+  // This is optional only for backwards compatibility.
+  // After migration, the optional keyword can be removed.
+  optional bool allow_internet_access = 21;
 }
 
 message SandboxCreateRequest {

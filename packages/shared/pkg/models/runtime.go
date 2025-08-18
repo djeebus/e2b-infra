@@ -80,10 +80,6 @@ func init() {
 	envbuildDescKernelVersion := envbuildFields[13].Descriptor()
 	// envbuild.DefaultKernelVersion holds the default value on creation for the kernel_version field.
 	envbuild.DefaultKernelVersion = envbuildDescKernelVersion.Default.(string)
-	// envbuildDescFirecrackerVersion is the schema descriptor for firecracker_version field.
-	envbuildDescFirecrackerVersion := envbuildFields[14].Descriptor()
-	// envbuild.DefaultFirecrackerVersion holds the default value on creation for the firecracker_version field.
-	envbuild.DefaultFirecrackerVersion = envbuildDescFirecrackerVersion.Default.(string)
 	snapshotFields := schema.Snapshot{}.Fields()
 	_ = snapshotFields
 	// snapshotDescCreatedAt is the schema descriptor for created_at field.
@@ -94,6 +90,10 @@ func init() {
 	snapshotDescEnvSecure := snapshotFields[7].Descriptor()
 	// snapshot.DefaultEnvSecure holds the default value on creation for the env_secure field.
 	snapshot.DefaultEnvSecure = snapshotDescEnvSecure.Default.(bool)
+	// snapshotDescAutoPause is the schema descriptor for auto_pause field.
+	snapshotDescAutoPause := snapshotFields[8].Descriptor()
+	// snapshot.DefaultAutoPause holds the default value on creation for the auto_pause field.
+	snapshot.DefaultAutoPause = snapshotDescAutoPause.Default.(bool)
 	teamFields := schema.Team{}.Fields()
 	_ = teamFields
 	// teamDescCreatedAt is the schema descriptor for created_at field.

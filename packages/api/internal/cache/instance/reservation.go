@@ -50,12 +50,8 @@ func (c *InstanceCache) list(teamID uuid.UUID) (instanceIDs []string) {
 	for _, value := range c.cache.Items() {
 		currentTeamID := value.TeamID
 
-		if currentTeamID == nil {
-			continue
-		}
-
-		if *currentTeamID == teamID {
-			instanceIDs = append(instanceIDs, value.Instance.SandboxID)
+		if currentTeamID == teamID {
+			instanceIDs = append(instanceIDs, value.SandboxID)
 		}
 	}
 

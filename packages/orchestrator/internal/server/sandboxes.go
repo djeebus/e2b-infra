@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
-	"github.com/e2b-dev/infra/packages/orchestrator/internal/config"
+	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox"
 	featureflags "github.com/e2b-dev/infra/packages/shared/pkg/feature-flags"
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
@@ -43,18 +44,12 @@ func (s *server) Create(ctxConn context.Context, req *orchestrator.SandboxCreate
 		attribute.String("envd.version", req.Sandbox.EnvdVersion),
 	)
 
-	// TODO: Temporary workaround, remove API changes deployed
-	if req.Sandbox.GetExecutionId() == "" {
-		req.Sandbox.ExecutionId = uuid.New().String()
-	}
-
 	metricsWriteFlag, flagErr := s.featureFlags.BoolFlag(featureflags.MetricsWriteFlagName, req.Sandbox.SandboxId)
 	if flagErr != nil {
 		zap.L().Error("soft failing during metrics write feature flag receive", zap.Error(flagErr))
 	}
 
 	template, err := s.templateCache.GetTemplate(
-		req.Sandbox.TemplateId,
 		req.Sandbox.BuildId,
 		req.Sandbox.KernelVersion,
 		req.Sandbox.FirecrackerVersion,
@@ -63,32 +58,49 @@ func (s *server) Create(ctxConn context.Context, req *orchestrator.SandboxCreate
 		return nil, fmt.Errorf("failed to get template snapshot data: %w", err)
 	}
 
-	sbx, cleanup, err := sandbox.ResumeSandbox(
+	sbx, err := sandbox.ResumeSandbox(
 		childCtx,
 		s.tracer,
 		s.networkPool,
 		template,
-		req.Sandbox,
+		sandbox.Config{
+			BaseTemplateID: req.Sandbox.BaseTemplateId,
+
+			Vcpu:            req.Sandbox.Vcpu,
+			RamMB:           req.Sandbox.RamMb,
+			TotalDiskSizeMB: req.Sandbox.TotalDiskSizeMb,
+			HugePages:       req.Sandbox.HugePages,
+
+			AllowInternetAccess: req.Sandbox.AllowInternetAccess,
+
+			Envd: sandbox.EnvdMetadata{
+				Version:     req.Sandbox.EnvdVersion,
+				AccessToken: req.Sandbox.EnvdAccessToken,
+				Vars:        req.Sandbox.EnvVars,
+			},
+		},
+		sandbox.RuntimeMetadata{
+			TemplateID:  req.Sandbox.TemplateId,
+			SandboxID:   req.Sandbox.SandboxId,
+			ExecutionID: req.Sandbox.ExecutionId,
+			TeamID:      req.Sandbox.TeamId,
+		},
 		childSpan.SpanContext().TraceID().String(),
 		req.StartTime.AsTime(),
 		req.EndTime.AsTime(),
 		s.devicePool,
-		config.AllowSandboxInternet,
 		metricsWriteFlag,
+		req.Sandbox,
 	)
 	if err != nil {
-		zap.L().Error("failed to create sandbox, cleaning up", zap.Error(err))
-		cleanupErr := cleanup.Run(ctx)
-
-		err := errors.Join(err, context.Cause(ctx), cleanupErr)
-		telemetry.ReportCriticalError(ctx, "failed to cleanup sandbox", err)
-
-		return nil, status.Errorf(codes.Internal, "failed to cleanup sandbox: %s", err)
+		err := errors.Join(err, context.Cause(ctx))
+		telemetry.ReportCriticalError(ctx, "failed to create sandbox", err)
+		return nil, status.Errorf(codes.Internal, "failed to create sandbox: %s", err)
 	}
 
 	s.sandboxes.Insert(req.Sandbox.SandboxId, sbx)
-	go func() {
-		ctx, childSpan := s.tracer.Start(context.Background(), "sandbox-create-stop")
+	go func(ctx context.Context) {
+		ctx, childSpan := s.tracer.Start(ctx, "sandbox-create-stop")
 		defer childSpan.End()
 
 		waitErr := sbx.Wait(ctx)
@@ -96,7 +108,7 @@ func (s *server) Create(ctxConn context.Context, req *orchestrator.SandboxCreate
 			sbxlogger.I(sbx).Error("failed to wait for sandbox, cleaning up", zap.Error(waitErr))
 		}
 
-		cleanupErr := cleanup.Run(ctx)
+		cleanupErr := sbx.Stop(ctx)
 		if cleanupErr != nil {
 			sbxlogger.I(sbx).Error("failed to cleanup sandbox, will remove from cache", zap.Error(cleanupErr))
 		}
@@ -113,14 +125,55 @@ func (s *server) Create(ctxConn context.Context, req *orchestrator.SandboxCreate
 				return false
 			}
 
-			return sbx.Config.ExecutionId == v.Config.ExecutionId
+			return sbx.Runtime.ExecutionID == v.Runtime.ExecutionID
 		})
 
 		// Remove the proxies assigned to the sandbox from the pool to prevent them from being reused.
-		s.proxy.RemoveFromPool(sbx.Config.ExecutionId)
+		s.proxy.RemoveFromPool(sbx.Runtime.ExecutionID)
 
 		sbxlogger.E(sbx).Info("Sandbox killed")
-	}()
+	}(context.WithoutCancel(ctx))
+
+	label := clickhouse.SandboxEventLabelCreate
+	if req.Sandbox.Snapshot {
+		label = clickhouse.SandboxEventLabelResume
+	}
+
+	sandboxLifeCycleEventsWriteFlag, flagErr := s.featureFlags.BoolFlag(
+		featureflags.SandboxLifeCycleEventsWriteFlagName, req.Sandbox.SandboxId)
+	if flagErr != nil {
+		zap.L().Error("soft failing during sandbox lifecycle events write feature flag receive", zap.Error(flagErr))
+	}
+	if sandboxLifeCycleEventsWriteFlag {
+		go func(label clickhouse.SandboxEventLabel) {
+			buildId := ""
+			if sbx.APIStoredConfig != nil {
+				buildId = sbx.APIStoredConfig.BuildId
+			}
+
+			teamID, err := uuid.Parse(sbx.Runtime.TeamID)
+			if err != nil {
+				sbxlogger.I(sbx).Error("error parsing team ID", zap.String("team_id", sbx.Runtime.TeamID), zap.Error(err))
+				return
+			}
+
+			err = s.sandboxEventBatcher.Push(clickhouse.SandboxEvent{
+				Timestamp:          time.Now().UTC(),
+				SandboxID:          sbx.Runtime.SandboxID,
+				SandboxTemplateID:  sbx.Config.BaseTemplateID,
+				SandboxBuildID:     buildId,
+				SandboxTeamID:      teamID,
+				SandboxExecutionID: sbx.Runtime.ExecutionID,
+				EventCategory:      string(clickhouse.SandboxEventCategoryLifecycle),
+				EventLabel:         string(label),
+				EventData:          sql.NullString{String: "", Valid: false},
+			})
+			if err != nil {
+				sbxlogger.I(sbx).Error(
+					"error inserting sandbox lifecycle event", zap.String("event_label", string(label)), zap.Error(err))
+			}
+		}(label)
+	}
 
 	return &orchestrator.SandboxCreateResponse{
 		ClientId: s.info.ClientId,
@@ -145,6 +198,45 @@ func (s *server) Update(ctx context.Context, req *orchestrator.SandboxUpdateRequ
 
 	item.EndAt = req.EndTime.AsTime()
 
+	// TODO: adapt to new types of update events
+	eventData := fmt.Sprintf(`{"set_timeout": "%s"}`, req.EndTime.AsTime().Format(time.RFC3339))
+
+	sandboxLifeCycleEventsWriteFlag, flagErr := s.featureFlags.BoolFlag(
+		featureflags.SandboxLifeCycleEventsWriteFlagName, item.Runtime.SandboxID)
+	if flagErr != nil {
+		zap.L().Error("soft failing during sandbox lifecycle events write feature flag receive", zap.Error(flagErr))
+	}
+	if sandboxLifeCycleEventsWriteFlag {
+		go func(eventData string) {
+			buildId := ""
+			if item.APIStoredConfig != nil {
+				buildId = item.APIStoredConfig.BuildId
+			}
+
+			teamID, err := uuid.Parse(item.Runtime.TeamID)
+			if err != nil {
+				sbxlogger.I(item).Error("error parsing team ID", zap.String("team_id", item.Runtime.TeamID), zap.Error(err))
+				return
+			}
+
+			err = s.sandboxEventBatcher.Push(clickhouse.SandboxEvent{
+				Timestamp:          time.Now().UTC(),
+				SandboxID:          item.Runtime.SandboxID,
+				SandboxTemplateID:  item.Config.BaseTemplateID,
+				SandboxBuildID:     buildId,
+				SandboxTeamID:      teamID,
+				SandboxExecutionID: item.Runtime.ExecutionID,
+				EventCategory:      string(clickhouse.SandboxEventCategoryLifecycle),
+				EventLabel:         string(clickhouse.SandboxEventLabelUpdate),
+				EventData:          sql.NullString{String: eventData, Valid: true},
+			})
+			if err != nil {
+				sbxlogger.I(item).Error(
+					"error inserting sandbox lifecycle event", zap.String("event_label", string(clickhouse.SandboxEventLabelUpdate)), zap.Error(err))
+			}
+		}(eventData)
+	}
+
 	return &emptypb.Empty{}, nil
 }
 
@@ -161,12 +253,12 @@ func (s *server) List(ctx context.Context, _ *emptypb.Empty) (*orchestrator.Sand
 			continue
 		}
 
-		if sbx.Config == nil {
+		if sbx.APIStoredConfig == nil {
 			continue
 		}
 
 		sandboxes = append(sandboxes, &orchestrator.RunningSandbox{
-			Config:    sbx.Config,
+			Config:    sbx.APIStoredConfig,
 			ClientId:  s.info.ClientId,
 			StartTime: timestamppb.New(sbx.StartedAt),
 			EndTime:   timestamppb.New(sbx.EndAt),
@@ -216,6 +308,42 @@ func (s *server) Delete(ctxConn context.Context, in *orchestrator.SandboxDeleteR
 		}
 	}()
 
+	sandboxLifeCycleEventsWriteFlag, flagErr := s.featureFlags.BoolFlag(
+		featureflags.SandboxLifeCycleEventsWriteFlagName, sbx.Runtime.SandboxID)
+	if flagErr != nil {
+		zap.L().Error("soft failing during sandbox lifecycle events write feature flag receive", zap.Error(flagErr))
+	}
+	if sandboxLifeCycleEventsWriteFlag {
+		go func() {
+			buildId := ""
+			if sbx.APIStoredConfig != nil {
+				buildId = sbx.APIStoredConfig.BuildId
+			}
+
+			teamID, err := uuid.Parse(sbx.Runtime.TeamID)
+			if err != nil {
+				sbxlogger.I(sbx).Error("error parsing team ID", zap.String("team_id", sbx.Runtime.TeamID), zap.Error(err))
+				return
+			}
+
+			err = s.sandboxEventBatcher.Push(clickhouse.SandboxEvent{
+				Timestamp:          time.Now().UTC(),
+				SandboxID:          sbx.Runtime.SandboxID,
+				SandboxTemplateID:  sbx.Config.BaseTemplateID,
+				SandboxBuildID:     buildId,
+				SandboxTeamID:      teamID,
+				SandboxExecutionID: sbx.Runtime.ExecutionID,
+				EventCategory:      string(clickhouse.SandboxEventCategoryLifecycle),
+				EventLabel:         string(clickhouse.SandboxEventLabelKill),
+				EventData:          sql.NullString{String: "", Valid: false},
+			})
+			if err != nil {
+				sbxlogger.I(sbx).Error(
+					"error inserting sandbox lifecycle event", zap.String("event_label", string(clickhouse.SandboxEventLabelKill)), zap.Error(err))
+			}
+		}()
+	}
+
 	return &emptypb.Empty{}, nil
 }
 
@@ -238,11 +366,11 @@ func (s *server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 	s.pauseMu.Unlock()
 
+	fcVersions := sbx.FirecrackerVersions()
 	snapshotTemplateFiles, err := storage.TemplateFiles{
-		TemplateID:         in.TemplateId,
 		BuildID:            in.BuildId,
-		KernelVersion:      sbx.Config.KernelVersion,
-		FirecrackerVersion: sbx.Config.FirecrackerVersion,
+		KernelVersion:      fcVersions.KernelVersion,
+		FirecrackerVersion: fcVersions.FirecrackerVersion,
 	}.CacheFiles()
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error creating template files", err)
@@ -250,11 +378,11 @@ func (s *server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 		return nil, status.Errorf(codes.Internal, "error creating template files: %s", err)
 	}
 
-	defer func() {
+	defer func(ctx context.Context) {
 		// sbx.Stop sometimes blocks for several seconds,
 		// so we don't want to block the request and do the cleanup in a goroutine after we already removed sandbox from cache and proxy.
 		go func() {
-			ctx, childSpan := s.tracer.Start(context.Background(), "sandbox-pause-stop")
+			ctx, childSpan := s.tracer.Start(ctx, "sandbox-pause-stop")
 			defer childSpan.End()
 
 			err := sbx.Stop(ctx)
@@ -262,7 +390,7 @@ func (s *server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 				sbxlogger.I(sbx).Error("error stopping sandbox after snapshot", logger.WithSandboxID(in.SandboxId), zap.Error(err))
 			}
 		}()
-	}()
+	}(context.WithoutCancel(ctx))
 
 	snapshot, err := sbx.Pause(ctx, s.tracer, snapshotTemplateFiles)
 	if err != nil {
@@ -272,7 +400,6 @@ func (s *server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 	}
 
 	err = s.templateCache.AddSnapshot(
-		snapshotTemplateFiles.TemplateID,
 		snapshotTemplateFiles.BuildID,
 		snapshotTemplateFiles.KernelVersion,
 		snapshotTemplateFiles.FirecrackerVersion,
@@ -290,14 +417,51 @@ func (s *server) Pause(ctx context.Context, in *orchestrator.SandboxPauseRequest
 
 	telemetry.ReportEvent(ctx, "added snapshot to template cache")
 
-	go func() {
-		err := snapshot.Upload(context.Background(), s.persistence, snapshotTemplateFiles.TemplateFiles)
+	go func(ctx context.Context) {
+		err := snapshot.Upload(ctx, s.persistence, snapshotTemplateFiles.TemplateFiles)
 		if err != nil {
 			sbxlogger.I(sbx).Error("error uploading sandbox snapshot", zap.Error(err))
 
 			return
 		}
-	}()
+	}(context.WithoutCancel(ctx))
+
+	sandboxLifeCycleEventsWriteFlag, flagErr := s.featureFlags.BoolFlag(
+		featureflags.SandboxLifeCycleEventsWriteFlagName, sbx.Runtime.SandboxID)
+	if flagErr != nil {
+		zap.L().Error("soft failing during sandbox lifecycle events write feature flag receive", zap.Error(flagErr))
+	}
+
+	if sandboxLifeCycleEventsWriteFlag {
+		go func() {
+			buildId := ""
+			if sbx.APIStoredConfig != nil {
+				buildId = sbx.APIStoredConfig.BuildId
+			}
+
+			teamID, err := uuid.Parse(sbx.Runtime.TeamID)
+			if err != nil {
+				sbxlogger.I(sbx).Error("error parsing team ID", zap.String("team_id", sbx.Runtime.TeamID), zap.Error(err))
+				return
+			}
+
+			err = s.sandboxEventBatcher.Push(clickhouse.SandboxEvent{
+				Timestamp:          time.Now().UTC(),
+				SandboxID:          sbx.Runtime.SandboxID,
+				SandboxTemplateID:  sbx.Config.BaseTemplateID,
+				SandboxBuildID:     buildId,
+				SandboxTeamID:      teamID,
+				SandboxExecutionID: sbx.Runtime.ExecutionID,
+				EventCategory:      string(clickhouse.SandboxEventCategoryLifecycle),
+				EventLabel:         string(clickhouse.SandboxEventLabelPause),
+				EventData:          sql.NullString{String: "", Valid: false},
+			})
+			if err != nil {
+				sbxlogger.I(sbx).Error(
+					"error inserting sandbox lifecycle event", zap.String("event_label", string(clickhouse.SandboxEventLabelPause)), zap.Error(err))
+			}
+		}()
+	}
 
 	return &emptypb.Empty{}, nil
 }

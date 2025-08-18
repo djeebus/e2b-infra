@@ -33,24 +33,25 @@ func (o *Orchestrator) PauseInstance(
 	defer span.End()
 
 	snapshotConfig := &db.SnapshotInfo{
-		BaseTemplateID:     sbx.Instance.TemplateID,
-		SandboxID:          sbx.Instance.SandboxID,
-		SandboxStartedAt:   sbx.StartTime,
-		VCPU:               sbx.VCpu,
-		RAMMB:              sbx.RamMB,
-		TotalDiskSizeMB:    sbx.TotalDiskSizeMB,
-		Metadata:           sbx.Metadata,
-		KernelVersion:      sbx.KernelVersion,
-		FirecrackerVersion: sbx.FirecrackerVersion,
-		EnvdVersion:        sbx.Instance.EnvdVersion,
-		EnvdSecured:        sbx.EnvdAccessToken != nil,
+		BaseTemplateID:      sbx.TemplateID,
+		SandboxID:           sbx.SandboxID,
+		SandboxStartedAt:    sbx.StartTime,
+		VCPU:                sbx.VCpu,
+		RAMMB:               sbx.RamMB,
+		TotalDiskSizeMB:     sbx.TotalDiskSizeMB,
+		Metadata:            sbx.Metadata,
+		KernelVersion:       sbx.KernelVersion,
+		FirecrackerVersion:  sbx.FirecrackerVersion,
+		EnvdVersion:         sbx.EnvdVersion,
+		EnvdSecured:         sbx.EnvdAccessToken != nil,
+		AllowInternetAccess: sbx.AllowInternetAccess,
 	}
 
 	envBuild, err := o.dbClient.NewSnapshotBuild(
 		ctx,
 		snapshotConfig,
 		teamID,
-		sbx.Node.ID,
+		sbx.Node.NodeID,
 	)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
@@ -71,7 +72,7 @@ func (o *Orchestrator) PauseInstance(
 		return fmt.Errorf("error pausing sandbox: %w", err)
 	}
 
-	err = o.dbClient.EnvBuildSetStatus(ctx, *envBuild.EnvID, envBuild.ID, envbuild.StatusSuccess)
+	err = o.dbClient.EnvBuildSetStatus(ctx, *envBuild.EnvID, envBuild.ID, envbuild.StatusSuccess, nil)
 	if err != nil {
 		telemetry.ReportCriticalError(ctx, "error pausing sandbox", err)
 
@@ -85,14 +86,20 @@ func snapshotInstance(ctx context.Context, orch *Orchestrator, sbx *instance.Ins
 	childCtx, childSpan := orch.tracer.Start(ctx, "snapshot-instance")
 	defer childSpan.End()
 
-	client, childCtx, err := orch.GetClient(childCtx, sbx.Node.ID)
+	node := orch.GetNode(sbx.Node.ClusterID, sbx.Node.NodeID)
+	if node == nil {
+		return fmt.Errorf("failed to get node '%s'", sbx.Node.NodeID)
+	}
+
+	client, childCtx, err := orch.GetClient(childCtx, sbx.Node.ClusterID, sbx.Node.NodeID)
 	if err != nil {
-		return fmt.Errorf("failed to get client '%s': %w", sbx.Node.ID, err)
+		return fmt.Errorf("failed to get client '%s': %w", sbx.Node.NodeID, err)
 	}
 
 	_, err = client.Sandbox.Pause(
-		childCtx, &orchestrator.SandboxPauseRequest{
-			SandboxId:  sbx.Instance.SandboxID,
+		node.GetSandboxDeleteCtx(childCtx, sbx.SandboxID, sbx.ExecutionID),
+		&orchestrator.SandboxPauseRequest{
+			SandboxId:  sbx.SandboxID,
 			TemplateId: templateID,
 			BuildId:    buildID,
 		},
@@ -112,5 +119,5 @@ func snapshotInstance(ctx context.Context, orch *Orchestrator, sbx *instance.Ins
 		return ErrPauseQueueExhausted{}
 	}
 
-	return fmt.Errorf("failed to pause sandbox '%s': %w", sbx.Instance.SandboxID, err)
+	return fmt.Errorf("failed to pause sandbox '%s': %w", sbx.SandboxID, err)
 }

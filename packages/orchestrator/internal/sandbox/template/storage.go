@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/build"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -29,6 +30,7 @@ func NewStorage(
 	fileType build.DiffType,
 	h *header.Header,
 	persistence storage.StorageProvider,
+	metrics blockmetrics.Metrics,
 ) (*Storage, error) {
 	if h == nil {
 		headerObjectPath := buildId + "/" + string(fileType) + storage.HeaderSuffix
@@ -80,16 +82,17 @@ func NewStorage(
 		}
 
 		h = header.NewHeader(&header.Metadata{
+			// The version is always 1 for the old style template without a header.
+			Version:     1,
 			BuildId:     id,
 			BaseBuildId: id,
 			Size:        uint64(size),
-			Version:     1,
 			BlockSize:   blockSize,
 			Generation:  1,
 		}, nil)
 	}
 
-	b := build.NewFile(h, store, fileType, persistence)
+	b := build.NewFile(h, store, fileType, persistence, metrics)
 
 	return &Storage{
 		source: b,

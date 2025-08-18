@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block"
+	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/build"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -23,21 +24,21 @@ type storageTemplate struct {
 	rootfsHeader  *header.Header
 	localSnapfile *LocalFileLink
 
+	metrics     blockmetrics.Metrics
 	persistence storage.StorageProvider
 }
 
 func newTemplateFromStorage(
-	templateId,
 	buildId,
 	kernelVersion,
 	firecrackerVersion string,
 	memfileHeader *header.Header,
 	rootfsHeader *header.Header,
 	persistence storage.StorageProvider,
+	metrics blockmetrics.Metrics,
 	localSnapfile *LocalFileLink,
 ) (*storageTemplate, error) {
 	files, err := storage.TemplateFiles{
-		TemplateID:         templateId,
 		BuildID:            buildId,
 		KernelVersion:      kernelVersion,
 		FirecrackerVersion: firecrackerVersion,
@@ -51,6 +52,7 @@ func newTemplateFromStorage(
 		localSnapfile: localSnapfile,
 		memfileHeader: memfileHeader,
 		rootfsHeader:  rootfsHeader,
+		metrics:       metrics,
 		persistence:   persistence,
 		memfile:       utils.NewSetOnce[block.ReadonlyDevice](),
 		rootfs:        utils.NewSetOnce[block.ReadonlyDevice](),
@@ -94,6 +96,7 @@ func (t *storageTemplate) Fetch(ctx context.Context, buildStore *build.DiffStore
 			build.Memfile,
 			t.memfileHeader,
 			t.persistence,
+			t.metrics,
 		)
 
 		if memfileErr != nil {
@@ -116,6 +119,7 @@ func (t *storageTemplate) Fetch(ctx context.Context, buildStore *build.DiffStore
 			build.Rootfs,
 			t.rootfsHeader,
 			t.persistence,
+			t.metrics,
 		)
 		if rootfsErr != nil {
 			errMsg := fmt.Errorf("failed to create rootfs storage: %w", rootfsErr)

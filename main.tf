@@ -120,6 +120,10 @@ module "cluster" {
   additional_domains = (var.additional_domains != "" ?
   [for item in split(",", var.additional_domains) : trimspace(item)] : [])
 
+  additional_api_services = (var.additional_api_services_json != "" ?
+    jsondecode(var.additional_api_services_json) :
+  [])
+
   docker_contexts_bucket_name = module.buckets.envs_docker_context_bucket_name
   cluster_setup_bucket_name   = module.buckets.cluster_setup_bucket_name
   fc_env_pipeline_bucket_name = module.buckets.fc_env_pipeline_bucket_name
@@ -239,6 +243,7 @@ module "nomad" {
   orchestrator_port           = var.orchestrator_port
   orchestrator_proxy_port     = var.orchestrator_proxy_port
   fc_env_pipeline_bucket_name = module.buckets.fc_env_pipeline_bucket_name
+  envd_timeout                = var.envd_timeout
 
   # Template manager
   template_manager_port          = var.template_manager_port
@@ -263,14 +268,4 @@ module "redis" {
   prefix = var.prefix
 
   depends_on = [module.api]
-}
-
-module "grafana" {
-  source          = "./terraform/grafana"
-  grafana_managed = var.grafana_managed
-
-  gcp_project_id = var.gcp_project_id
-  gcp_region     = var.gcp_region
-  prefix         = var.prefix
-  domain_name    = var.domain_name
 }

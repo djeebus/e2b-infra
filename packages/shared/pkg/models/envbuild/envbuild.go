@@ -101,8 +101,6 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// DefaultKernelVersion holds the default value on creation for the "kernel_version" field.
 	DefaultKernelVersion string
-	// DefaultFirecrackerVersion holds the default value on creation for the "firecracker_version" field.
-	DefaultFirecrackerVersion string
 )
 
 // Status defines the type for the "status" enum field.
@@ -221,11 +219,6 @@ func ByEnvdVersion(opts ...sql.OrderTermOption) OrderOption {
 // ByClusterNodeID orders the results by the cluster_node_id field.
 func ByClusterNodeID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldClusterNodeID, opts...).ToFunc()
-}
-
-// ByReason orders the results by the reason field.
-func ByReason(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldReason, opts...).ToFunc()
 }
 
 // ByEnvField orders the results by env field.

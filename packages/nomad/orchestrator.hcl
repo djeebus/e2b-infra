@@ -67,9 +67,11 @@ EOT
         LOGS_COLLECTOR_ADDRESS       = "${logs_collector_address}"
         LOGS_COLLECTOR_PUBLIC_IP     = "${logs_collector_public_ip}"
         ENVIRONMENT                  = "${environment}"
+        ENVD_TIMEOUT                 = "${envd_timeout}"
         TEMPLATE_BUCKET_NAME         = "${template_bucket_name}"
         OTEL_COLLECTOR_GRPC_ENDPOINT = "${otel_collector_grpc_endpoint}"
         ALLOW_SANDBOX_INTERNET       = "${allow_sandbox_internet}"
+        CLICKHOUSE_CONNECTION_STRING = "${clickhouse_connection_string}"
 
 %{ if launch_darkly_api_key != "" }
         LAUNCH_DARKLY_API_KEY         = "${launch_darkly_api_key}"

@@ -19,6 +19,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/db"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/envbuild"
+	"github.com/e2b-dev/infra/packages/shared/pkg/schema"
 )
 
 const templateInfoExpiration = 5 * time.Minute
@@ -84,7 +85,7 @@ func (c *TemplateCache) Get(ctx context.Context, aliasOrEnvID string, teamID uui
 	}
 
 	if item == nil {
-		result, err := c.db.GetEnvWithBuild(ctx, aliasOrEnvID)
+		result, err := c.db.GetTemplateWithBuild(ctx, aliasOrEnvID)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return nil, nil, &api.APIError{Code: http.StatusNotFound, ClientMsg: fmt.Sprintf("template '%s' not found", aliasOrEnvID), Err: err}
@@ -154,7 +155,7 @@ type TemplateBuildInfo struct {
 	TeamID      uuid.UUID
 	TemplateID  string
 	BuildStatus envbuild.Status
-	Reason      *string
+	Reason      *schema.BuildReason
 
 	ClusterID     *uuid.UUID
 	ClusterNodeID *string
@@ -167,13 +168,13 @@ func (TemplateBuildInfoNotFound) Error() string {
 }
 
 type TemplatesBuildCache struct {
-	cache *ttlcache.Cache[uuid.UUID, *TemplateBuildInfo]
+	cache *ttlcache.Cache[uuid.UUID, TemplateBuildInfo]
 	db    *db.DB
 	mx    sync.Mutex
 }
 
 func NewTemplateBuildCache(db *db.DB) *TemplatesBuildCache {
-	cache := ttlcache.New(ttlcache.WithTTL[uuid.UUID, *TemplateBuildInfo](templateInfoExpiration))
+	cache := ttlcache.New(ttlcache.WithTTL[uuid.UUID, TemplateBuildInfo](templateInfoExpiration))
 	go cache.Start()
 
 	return &TemplatesBuildCache{
@@ -182,27 +183,40 @@ func NewTemplateBuildCache(db *db.DB) *TemplatesBuildCache {
 	}
 }
 
-func (c *TemplatesBuildCache) SetStatus(buildID uuid.UUID, status envbuild.Status, reason *string) {
+func (c *TemplatesBuildCache) SetStatus(buildID uuid.UUID, status envbuild.Status, reason *schema.BuildReason) {
 	c.mx.Lock()
 	defer c.mx.Unlock()
 
-	item := c.cache.Get(buildID)
-	if item == nil {
+	cacheItem := c.cache.Get(buildID)
+	if cacheItem == nil {
 		return
 	}
+
+	item := cacheItem.Value()
 
 	zap.L().Info("Setting template build status",
 		logger.WithBuildID(buildID.String()),
 		zap.String("to_status", status.String()),
-		zap.String("from_status", item.Value().BuildStatus.String()),
-		zap.Stringp("reason", reason),
+		zap.String("from_status", item.BuildStatus.String()),
+		zap.Any("reason", reason),
 	)
 
-	item.Value().BuildStatus = status
-	item.Value().Reason = reason
+	_ = c.cache.Set(
+		buildID,
+		TemplateBuildInfo{
+			TeamID:      item.TeamID,
+			TemplateID:  item.TemplateID,
+			BuildStatus: status,
+			Reason:      reason,
+
+			ClusterID:     item.ClusterID,
+			ClusterNodeID: item.ClusterNodeID,
+		},
+		templateInfoExpiration,
+	)
 }
 
-func (c *TemplatesBuildCache) Get(ctx context.Context, buildID uuid.UUID, templateID string) (*TemplateBuildInfo, error) {
+func (c *TemplatesBuildCache) Get(ctx context.Context, buildID uuid.UUID, templateID string) (TemplateBuildInfo, error) {
 	item := c.cache.Get(buildID)
 	if item == nil {
 		zap.L().Debug("Template build info not found in cache, fetching from DB", logger.WithBuildID(buildID.String()))
@@ -210,25 +224,25 @@ func (c *TemplatesBuildCache) Get(ctx context.Context, buildID uuid.UUID, templa
 		envDB, envDBErr := c.db.GetEnv(ctx, templateID)
 		if envDBErr != nil {
 			if errors.Is(envDBErr, db.TemplateNotFound{}) {
-				return nil, TemplateBuildInfoNotFound{}
+				return TemplateBuildInfo{}, TemplateBuildInfoNotFound{}
 			}
 
-			return nil, fmt.Errorf("failed to get template '%s': %w", buildID, envDBErr)
+			return TemplateBuildInfo{}, fmt.Errorf("failed to get template '%s': %w", buildID, envDBErr)
 		}
 
 		// making sure associated template build really exists
 		envBuildDB, envBuildDBErr := c.db.GetEnvBuild(ctx, buildID)
 		if envBuildDBErr != nil {
 			if errors.Is(envBuildDBErr, db.TemplateBuildNotFound{}) {
-				return nil, TemplateBuildInfoNotFound{}
+				return TemplateBuildInfo{}, TemplateBuildInfoNotFound{}
 			}
 
-			return nil, fmt.Errorf("failed to get template build '%s': %w", buildID, envBuildDBErr)
+			return TemplateBuildInfo{}, fmt.Errorf("failed to get template build '%s': %w", buildID, envBuildDBErr)
 		}
 
 		item = c.cache.Set(
 			buildID,
-			&TemplateBuildInfo{
+			TemplateBuildInfo{
 				TeamID:      envDB.TeamID,
 				TemplateID:  envDB.ID,
 				BuildStatus: envBuildDB.Status,

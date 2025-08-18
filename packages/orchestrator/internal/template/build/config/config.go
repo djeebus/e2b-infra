@@ -8,6 +8,12 @@ import (
 const InstanceBuildPrefix = "b"
 
 type TemplateConfig struct {
+	// TemplateID is the ID of the template to build.
+	TemplateID string
+
+	// CacheScope is the scope of layers and files caches.
+	CacheScope string
+
 	// Command to run when building the template.
 	StartCmd string
 
@@ -28,6 +34,9 @@ type TemplateConfig struct {
 
 	// FromImage is the base image to use for building the template.
 	FromImage string
+
+	// FromTemplate is the base template to use for building the template.
+	FromTemplate *templatemanager.FromTemplateConfig
 
 	// Force rebuild of the template even if it is already cached.
 	Force *bool

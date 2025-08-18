@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
+	ut "github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
 
 const (
@@ -51,6 +53,7 @@ func (o *Orchestrator) CreateSandbox(
 	baseTemplateID string,
 	autoPause bool,
 	envdAuthToken *string,
+	allowInternetAccess *bool,
 ) (*api.Sandbox, *api.APIError) {
 	childCtx, childSpan := o.tracer.Start(ctx, "create-sandbox")
 	defer childSpan.End()
@@ -121,25 +124,27 @@ func (o *Orchestrator) CreateSandbox(
 
 	sbxRequest := &orchestrator.SandboxCreateRequest{
 		Sandbox: &orchestrator.SandboxConfig{
-			BaseTemplateId:     baseTemplateID,
-			TemplateId:         *build.EnvID,
-			Alias:              &alias,
-			TeamId:             team.Team.ID.String(),
-			BuildId:            build.ID.String(),
-			SandboxId:          sandboxID,
-			ExecutionId:        executionID,
-			KernelVersion:      build.KernelVersion,
-			FirecrackerVersion: build.FirecrackerVersion,
-			EnvdVersion:        *build.EnvdVersion,
-			Metadata:           metadata,
-			EnvVars:            envVars,
-			EnvdAccessToken:    envdAuthToken,
-			MaxSandboxLength:   team.Tier.MaxLengthHours,
-			HugePages:          features.HasHugePages(),
-			RamMb:              build.RamMb,
-			Vcpu:               build.Vcpu,
-			Snapshot:           isResume,
-			AutoPause:          &autoPause,
+			BaseTemplateId:      baseTemplateID,
+			TemplateId:          *build.EnvID,
+			Alias:               &alias,
+			TeamId:              team.Team.ID.String(),
+			BuildId:             build.ID.String(),
+			SandboxId:           sandboxID,
+			ExecutionId:         executionID,
+			KernelVersion:       build.KernelVersion,
+			FirecrackerVersion:  build.FirecrackerVersion,
+			EnvdVersion:         *build.EnvdVersion,
+			Metadata:            metadata,
+			EnvVars:             envVars,
+			EnvdAccessToken:     envdAuthToken,
+			MaxSandboxLength:    team.Tier.MaxLengthHours,
+			HugePages:           features.HasHugePages(),
+			RamMb:               build.RamMb,
+			Vcpu:                build.Vcpu,
+			Snapshot:            isResume,
+			AutoPause:           autoPause,
+			AllowInternetAccess: allowInternetAccess,
+			TotalDiskSizeMb:     ut.FromPtr(build.TotalDiskSizeMb),
 		},
 		StartTime: timestamppb.New(startTime),
 		EndTime:   timestamppb.New(endTime),
@@ -150,7 +155,12 @@ func (o *Orchestrator) CreateSandbox(
 	if isResume && nodeID != nil {
 		telemetry.ReportEvent(childCtx, "Placing sandbox on the node where the snapshot was taken")
 
-		node, _ = o.nodes.Get(*nodeID)
+		clusterID := uuid.Nil
+		if team.Team.ClusterID != nil {
+			clusterID = *team.Team.ClusterID
+		}
+
+		node = o.GetNode(clusterID, *nodeID)
 		if node != nil && node.Status() != api.NodeStatusReady {
 			node = nil
 		}
@@ -202,21 +212,28 @@ func (o *Orchestrator) CreateSandbox(
 			CPUs:      build.Vcpu,
 		})
 
-		client, childCtx := node.GetClient(childCtx)
-		_, err = client.Sandbox.Create(childCtx, sbxRequest)
+		client, childCtx := node.getClient(childCtx)
+		_, err = client.Sandbox.Create(node.GetSandboxCreateCtx(childCtx, sbxRequest), sbxRequest)
 		// The request is done, we will either add it to the cache or remove it from the node
 		if err == nil {
 			// The sandbox was created successfully
+			attributes := []attribute.KeyValue{
+				attribute.Int("attempts", attempt),
+				attribute.Bool("is_resume", isResume),
+				attribute.Bool("node_affinity_requested", nodeID != nil),
+				attribute.Bool("node_affinity_success", nodeID != nil && node.Info.NodeID == *nodeID),
+			}
+			o.createdSandboxesCounter.Add(ctx, 1, metric.WithAttributes(attributes...))
 			break
 		}
 
 		node.sbxsInProgress.Remove(sandboxID)
 
-		zap.L().Error("Failed to create sandbox", logger.WithSandboxID(sandboxID), logger.WithNodeID(node.Info.ID), zap.Int("attempt", attempt), zap.Error(utils.UnwrapGRPCError(err)))
+		zap.L().Error("Failed to create sandbox", logger.WithSandboxID(sandboxID), logger.WithNodeID(node.Info.NodeID), zap.Int("attempt", attempt), zap.Error(utils.UnwrapGRPCError(err)))
 
 		// The node is not available, try again with another node
 		node.createFails.Add(1)
-		nodesExcluded[node.Info.ID] = node
+		nodesExcluded[node.Info.NodeID] = node
 		node = nil
 		attempt += 1
 	}
@@ -228,7 +245,7 @@ func (o *Orchestrator) CreateSandbox(
 	// The sandbox was created successfully, the resources will be counted in cache
 	defer node.sbxsInProgress.Remove(sandboxID)
 
-	telemetry.SetAttributes(childCtx, attribute.String("node.id", node.Info.ID))
+	telemetry.SetAttributes(childCtx, attribute.String("node.id", node.Info.NodeID))
 	telemetry.ReportEvent(childCtx, "Created sandbox")
 
 	sbx := api.Sandbox{
@@ -247,10 +264,13 @@ func (o *Orchestrator) CreateSandbox(
 	endTime = startTime.Add(timeout)
 
 	instanceInfo := instance.NewInstanceInfo(
-		&sbx,
+		sbx.SandboxID,
+		sbx.TemplateID,
+		sbx.ClientID,
+		sbx.Alias,
 		executionID,
-		&team.Team.ID,
-		&build.ID,
+		team.Team.ID,
+		build.ID,
 		metadata,
 		time.Duration(team.Tier.MaxLengthHours)*time.Hour,
 		startTime,
@@ -264,6 +284,7 @@ func (o *Orchestrator) CreateSandbox(
 		node.Info,
 		autoPause,
 		envdAuthToken,
+		allowInternetAccess,
 		baseTemplateID,
 	)
 
@@ -281,13 +302,6 @@ func (o *Orchestrator) CreateSandbox(
 			ClientMsg: "Failed to create sandbox",
 			Err:       fmt.Errorf("error when adding instance to cache: %w", cacheErr),
 		}
-	}
-
-	// we need to inform remote cluster proxy about newly spawned sandbox so it's registered in sandbox traffic proxy
-	err = o.RegisterSandboxInsideClusterCatalog(childCtx, node, startTime, sbxRequest.Sandbox)
-	if err != nil {
-		telemetry.ReportError(ctx, "failed to register sandbox in cluster catalog", err)
-		zap.L().Error("Failed to register sandbox in cluster catalog", logger.WithSandboxID(sbx.SandboxID), zap.Error(err))
 	}
 
 	return &sbx, nil
@@ -333,7 +347,7 @@ func (o *Orchestrator) findLeastBusyNode(nodesExcluded map[string]*Node, cluster
 		}
 
 		// Node must be in the same cluster as requested
-		if node.ClusterID != clusterID {
+		if node.Info.ClusterID != clusterID {
 			continue
 		}
 
@@ -343,7 +357,7 @@ func (o *Orchestrator) findLeastBusyNode(nodesExcluded map[string]*Node, cluster
 		}
 
 		// Skip already tried nodes
-		if nodesExcluded[node.Info.ID] != nil {
+		if nodesExcluded[node.Info.NodeID] != nil {
 			continue
 		}
 

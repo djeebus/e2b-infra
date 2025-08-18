@@ -1,7 +1,6 @@
 package fc
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
-	txtTemplate "text/template"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -27,15 +25,6 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 	"github.com/e2b-dev/infra/packages/shared/pkg/utils"
 )
-
-const startScript = `mount --make-rprivate / &&
-mount -t tmpfs tmpfs {{ .buildDir }} -o X-mount.mkdir &&
-mount -t tmpfs tmpfs {{ .buildKernelDir }} -o X-mount.mkdir &&
-ln -s {{ .rootfsPath }} {{ .buildRootfsPath }} &&
-ln -s {{ .kernelPath }} {{ .buildKernelPath }} &&
-ip netns exec {{ .namespaceID }} {{ .firecrackerPath }} --api-sock {{ .firecrackerSocket }}`
-
-var startScriptTemplate = txtTemplate.Must(txtTemplate.New("fc-start").Parse(startScript))
 
 type ProcessOptions struct {
 	// InitScriptPath is the path to the init script that will be executed inside the VM on kernel start.
@@ -54,19 +43,21 @@ type ProcessOptions struct {
 }
 
 type Process struct {
+	Versions FirecrackerVersions
+
 	cmd *exec.Cmd
 
 	firecrackerSocketPath string
 
-	slot       *network.Slot
-	rootfsPath string
-	files      *storage.SandboxFiles
+	slot               *network.Slot
+	providerRootfsPath string
+	rootfsPath         string
+	kernelPath         string
+	files              *storage.SandboxFiles
 
 	Exit *utils.SetOnce[struct{}]
 
 	client *apiClient
-
-	buildRootfsPath string
 }
 
 func NewProcess(
@@ -74,50 +65,32 @@ func NewProcess(
 	tracer trace.Tracer,
 	slot *network.Slot,
 	files *storage.SandboxFiles,
-	rootfsPath string,
-	baseTemplateID string,
-	baseBuildID string,
+	versions FirecrackerVersions,
+	rootfsProviderPath string,
+	rootfsPaths RootfsPaths,
 ) (*Process, error) {
 	childCtx, childSpan := tracer.Start(ctx, "initialize-fc", trace.WithAttributes(
 		attribute.Int("sandbox.slot.index", slot.Idx),
 	))
 	defer childSpan.End()
 
-	var fcStartScript bytes.Buffer
-
-	baseBuild := storage.TemplateFiles{
-		TemplateID:         baseTemplateID,
-		BuildID:            baseBuildID,
-		KernelVersion:      files.KernelVersion,
-		FirecrackerVersion: files.FirecrackerVersion,
-	}
-
-	buildRootfsPath := baseBuild.SandboxRootfsPath()
-	err := startScriptTemplate.Execute(&fcStartScript, map[string]interface{}{
-		"rootfsPath":        files.SandboxCacheRootfsLinkPath(),
-		"kernelPath":        files.CacheKernelPath(),
-		"buildDir":          baseBuild.SandboxBuildDir(),
-		"buildRootfsPath":   buildRootfsPath,
-		"buildKernelPath":   files.BuildKernelPath(),
-		"buildKernelDir":    files.BuildKernelDir(),
-		"namespaceID":       slot.NamespaceID(),
-		"firecrackerPath":   files.FirecrackerPath(),
-		"firecrackerSocket": files.SandboxFirecrackerSocketPath(),
-	})
+	// Build the firecracker start script and get computed paths
+	startBuilder := NewStartScriptBuilder()
+	startScript, err := startBuilder.Build(versions, files, rootfsPaths, slot.NamespaceID())
 	if err != nil {
-		return nil, fmt.Errorf("error executing fc start script template: %w", err)
+		return nil, err
 	}
 
 	telemetry.SetAttributes(childCtx,
-		attribute.String("sandbox.cmd", fcStartScript.String()),
+		attribute.String("sandbox.cmd", startScript.Value),
 	)
 
-	_, err = os.Stat(files.FirecrackerPath())
+	_, err = os.Stat(versions.FirecrackerPath())
 	if err != nil {
 		return nil, fmt.Errorf("error stating firecracker binary: %w", err)
 	}
 
-	_, err = os.Stat(files.CacheKernelPath())
+	_, err = os.Stat(versions.HostKernelPath())
 	if err != nil {
 		return nil, fmt.Errorf("error stating kernel file: %w", err)
 	}
@@ -128,7 +101,7 @@ func NewProcess(
 		"--",
 		"bash",
 		"-c",
-		fcStartScript.String(),
+		startScript.Value,
 	)
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
@@ -136,35 +109,29 @@ func NewProcess(
 	}
 
 	return &Process{
+		Versions:              versions,
 		Exit:                  utils.NewSetOnce[struct{}](),
 		cmd:                   cmd,
 		firecrackerSocketPath: files.SandboxFirecrackerSocketPath(),
 		client:                newApiClient(files.SandboxFirecrackerSocketPath()),
-		rootfsPath:            rootfsPath,
+		providerRootfsPath:    rootfsProviderPath,
 		files:                 files,
 		slot:                  slot,
 
-		buildRootfsPath: buildRootfsPath,
+		kernelPath: startScript.KernelPath,
+		rootfsPath: startScript.RootfsPath,
 	}, nil
 }
 
 func (p *Process) configure(
 	ctx context.Context,
 	tracer trace.Tracer,
-	sandboxID string,
-	templateID string,
-	teamID string,
+	sbxMetadata sbxlogger.LoggerMetadata,
 	stdoutExternal io.Writer,
 	stderrExternal io.Writer,
 ) error {
 	childCtx, childSpan := tracer.Start(ctx, "configure-fc")
 	defer childSpan.End()
-
-	sbxMetadata := sbxlogger.SandboxMetadata{
-		SandboxID:  sandboxID,
-		TemplateID: templateID,
-		TeamID:     teamID,
-	}
 
 	stdoutWriter := &zapio.Writer{Log: sbxlogger.I(sbxMetadata).Logger, Level: zap.InfoLevel}
 	stdoutWriters := []io.Writer{stdoutWriter}
@@ -238,9 +205,7 @@ func (p *Process) configure(
 func (p *Process) Create(
 	ctx context.Context,
 	tracer trace.Tracer,
-	sandboxID string,
-	templateID string,
-	teamID string,
+	loggerMetadata sbxlogger.LoggerMetadata,
 	vCPUCount int64,
 	memoryMB int64,
 	hugePages bool,
@@ -252,9 +217,7 @@ func (p *Process) Create(
 	err := p.configure(
 		childCtx,
 		tracer,
-		sandboxID,
-		templateID,
-		teamID,
+		loggerMetadata,
 		options.Stdout,
 		options.Stderr,
 	)
@@ -300,7 +263,7 @@ func (p *Process) Create(
 	}
 
 	kernelArgs := args.String()
-	err = p.client.setBootSource(childCtx, kernelArgs, p.files.BuildKernelPath())
+	err = p.client.setBootSource(childCtx, kernelArgs, p.kernelPath)
 	if err != nil {
 		fcStopErr := p.Stop()
 
@@ -309,12 +272,12 @@ func (p *Process) Create(
 	telemetry.ReportEvent(childCtx, "set fc boot source config")
 
 	// Rootfs
-	err = utils.SymlinkForce(p.rootfsPath, p.files.SandboxCacheRootfsLinkPath())
+	err = utils.SymlinkForce(p.providerRootfsPath, p.files.SandboxCacheRootfsLinkPath())
 	if err != nil {
 		return fmt.Errorf("error symlinking rootfs: %w", err)
 	}
 
-	err = p.client.setRootfsDrive(childCtx, p.buildRootfsPath)
+	err = p.client.setRootfsDrive(childCtx, p.rootfsPath)
 	if err != nil {
 		fcStopErr := p.Stop()
 
@@ -364,9 +327,7 @@ func (p *Process) Resume(
 	err := p.configure(
 		childCtx,
 		tracer,
-		mmdsMetadata.SandboxId,
-		mmdsMetadata.TemplateId,
-		mmdsMetadata.TeamId,
+		mmdsMetadata,
 		nil,
 		nil,
 	)
@@ -376,7 +337,7 @@ func (p *Process) Resume(
 		return errors.Join(fmt.Errorf("error starting fc process: %w", err), fcStopErr)
 	}
 
-	err = utils.SymlinkForce(p.rootfsPath, p.files.SandboxCacheRootfsLinkPath())
+	err = utils.SymlinkForce(p.providerRootfsPath, p.files.SandboxCacheRootfsLinkPath())
 	if err != nil {
 		return fmt.Errorf("error symlinking rootfs: %w", err)
 	}

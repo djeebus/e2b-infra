@@ -244,6 +244,11 @@ variable "template_manager_port" {
   default = 5008 // we want to use the same port for both because of edge api
 }
 
+variable "envd_timeout" {
+  type    = string
+  default = "40s"
+}
+
 variable "environment" {
   type    = string
   default = "prod"
@@ -286,6 +291,24 @@ variable "additional_domains" {
   default     = ""
 }
 
+variable "additional_api_services_json" {
+  type        = string
+  description = <<EOT
+Additional path rules to add to the API path matcher.
+Format: json string of an array of objects with 'path' and 'service' keys.
+Example:
+[
+  {
+    "paths": ["/api/v1"],
+    "service_id": "projects/e2b/global/backendServices/example",
+    "api_node_group_port_name": "example-port",
+    "api_node_group_port": 8080
+  }
+]
+EOT
+default     = ""
+}
+
 variable "prefix" {
   type        = string
   description = "The prefix to use for all resources in this module"
@@ -299,11 +322,6 @@ variable "labels" {
     "app"       = "e2b"
     "terraform" = "true"
   }
-}
-
-variable "terraform_state_bucket" {
-  description = "The name of the bucket to store terraform state in"
-  type        = string
 }
 
 variable "loki_resources_memory_mb" {
@@ -341,15 +359,4 @@ variable "template_bucket_name" {
 variable "redis_managed" {
   default = false
   type    = bool
-}
-
-variable "grafana_managed" {
-  default = false
-  type    = bool
-}
-
-variable "write_clickhouse_metrics" {
-  description = "Whether to write metrics to ClickHouse"
-  type        = bool
-  default     = false
 }

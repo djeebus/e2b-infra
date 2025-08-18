@@ -18,11 +18,14 @@ import (
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 
+	clickhouse "github.com/e2b-dev/infra/packages/clickhouse/pkg"
+	"github.com/e2b-dev/infra/packages/clickhouse/pkg/batcher"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/grpcserver"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/proxy"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block"
+	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/nbd"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/network"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/template"
@@ -32,6 +35,7 @@ import (
 	tmplserver "github.com/e2b-dev/infra/packages/orchestrator/internal/template/server"
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 	featureflags "github.com/e2b-dev/infra/packages/shared/pkg/feature-flags"
+	"github.com/e2b-dev/infra/packages/shared/pkg/grpc/orchestrator-info"
 	"github.com/e2b-dev/infra/packages/shared/pkg/limit"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
@@ -47,8 +51,6 @@ type Closeable interface {
 const (
 	defaultPort      = 5008
 	defaultProxyPort = 5007
-
-	sandboxMetricExportPeriod = 5 * time.Second
 
 	version = "0.1.0"
 
@@ -143,19 +145,19 @@ func run(port, proxyPort uint) (success bool) {
 
 	// Setup telemetry
 	var tel *telemetry.Client
-	if env.IsLocal() {
+	if telemetry.OtelCollectorGRPCEndpoint == "" {
 		tel = telemetry.NewNoopClient()
 	} else {
 		var err error
 		tel, err = telemetry.New(ctx, serviceName, commitSHA, clientID)
 		if err != nil {
-			zap.L().Fatal("failed to create metrics exporter", zap.Error(err))
+			zap.L().Fatal("failed to init telemetry", zap.Error(err))
 		}
 	}
 	defer func() {
 		err := tel.Shutdown(ctx)
 		if err != nil {
-			log.Printf("error while shutting down metrics provider: %v", err)
+			log.Printf("error while shutting down telemetry: %v", err)
 			success = false
 		}
 	}()
@@ -254,17 +256,62 @@ func run(port, proxyPort uint) (success bool) {
 		zap.L().Fatal("failed to create template storage provider", zap.Error(err))
 	}
 
-	templateCache, err := template.NewCache(ctx, persistence)
+	blockMetrics, err := blockmetrics.NewMetrics(tel.MeterProvider)
+	if err != nil {
+		zap.L().Fatal("failed to create metrics provider", zap.Error(err))
+	}
+
+	templateCache, err := template.NewCache(ctx, persistence, blockMetrics)
 	if err != nil {
 		zap.L().Fatal("failed to create template cache", zap.Error(err))
 	}
 
-	sandboxObserver, err := metrics.NewSandboxObserver(ctx, serviceInfo.SourceCommit, serviceInfo.ClientId, sandboxMetricExportPeriod, sandboxes)
+	var clickhouseBatcher batcher.ClickhouseBatcher
+
+	clickhouseConnectionString := os.Getenv("CLICKHOUSE_CONNECTION_STRING")
+	if clickhouseConnectionString == "" {
+		clickhouseBatcher = batcher.NewNoopBatcher()
+	} else {
+		var err error
+		clickhouseConn, err := clickhouse.NewDriver(clickhouseConnectionString)
+		if err != nil {
+			zap.L().Fatal("failed to create clickhouse driver", zap.Error(err))
+		}
+
+		maxBatchSize := 100
+		if val, err := featureFlags.IntFlag(featureflags.ClickhouseBatcherMaxBatchSize, "clickhouse-batcher"); err == nil {
+			maxBatchSize = int(val)
+		}
+
+		maxDelay := 1 * time.Second
+		if val, err := featureFlags.IntFlag(featureflags.ClickhouseBatcherMaxDelay, "clickhouse-batcher"); err == nil {
+			maxDelay = time.Duration(val) * time.Millisecond
+		}
+
+		queueSize := 1000
+		if val, err := featureFlags.IntFlag(featureflags.ClickhouseBatcherQueueSize, "clickhouse-batcher"); err == nil {
+			queueSize = val
+		}
+
+		clickhouseBatcher, err = batcher.NewSandboxEventInsertsBatcher(clickhouseConn, batcher.BatcherOptions{
+			MaxBatchSize: maxBatchSize,
+			MaxDelay:     maxDelay,
+			QueueSize:    queueSize,
+			ErrorHandler: func(err error) {
+				zap.L().Error("error batching sandbox events", zap.Error(err))
+			},
+		})
+		if err != nil {
+			zap.L().Fatal("failed to create clickhouse batcher", zap.Error(err))
+		}
+	}
+
+	sandboxObserver, err := metrics.NewSandboxObserver(ctx, serviceInfo.SourceCommit, serviceInfo.ClientId, sandboxes)
 	if err != nil {
 		zap.L().Fatal("failed to create sandbox observer", zap.Error(err))
 	}
 
-	_, err = server.New(ctx, grpcSrv, tel, networkPool, devicePool, templateCache, tracer, serviceInfo, sandboxProxy, sandboxes, featureFlags, persistence)
+	_, err = server.New(ctx, grpcSrv, tel, networkPool, devicePool, templateCache, tracer, serviceInfo, sandboxProxy, sandboxes, featureFlags, clickhouseBatcher, persistence)
 	if err != nil {
 		zap.L().Fatal("failed to create server", zap.Error(err))
 	}
@@ -295,6 +342,7 @@ func run(port, proxyPort uint) (success bool) {
 		featureFlags,
 		sandboxObserver,
 		limiter,
+		clickhouseBatcher,
 	)
 
 	// Initialize the template manager only if the service is enabled
@@ -313,12 +361,12 @@ func run(port, proxyPort uint) (success bool) {
 			templateCache,
 			persistence,
 			limiter,
+			serviceInfo,
 		)
 		if err != nil {
 			zap.L().Fatal("failed to create template manager", zap.Error(err))
 		}
 
-		// Prepend to make sure it's awaited on graceful shutdown
 		closers = append([]Closeable{tmpl}, closers...)
 	}
 
@@ -377,6 +425,12 @@ func run(port, proxyPort uint) (success bool) {
 	defer cancelCloseCtx()
 	if forceStop {
 		cancelCloseCtx()
+	}
+
+	// Mark service draining if not already.
+	// If service stats was previously changed via API, we don't want to override it.
+	if serviceInfo.GetStatus() == orchestrator.ServiceInfoStatus_Healthy {
+		serviceInfo.SetStatus(orchestrator.ServiceInfoStatus_Draining)
 	}
 
 	for _, c := range closers {

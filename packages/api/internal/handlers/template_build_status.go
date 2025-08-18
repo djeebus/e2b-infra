@@ -13,6 +13,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/db"
 	"github.com/e2b-dev/infra/packages/shared/pkg/logs"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/envbuild"
+	"github.com/e2b-dev/infra/packages/shared/pkg/schema"
 	"github.com/e2b-dev/infra/packages/shared/pkg/telemetry"
 )
 
@@ -61,6 +62,7 @@ func (a *APIStore) GetTemplatesTemplateIDBuildsBuildIDStatus(c *gin.Context, tem
 	// early return if still waiting for build start
 	if buildInfo.BuildStatus == envbuild.StatusWaiting {
 		result := api.TemplateBuild{
+			LogEntries: make([]api.BuildLogEntry, 0),
 			Logs:       make([]string, 0),
 			TemplateID: templateID,
 			BuildID:    buildID,
@@ -73,11 +75,12 @@ func (a *APIStore) GetTemplatesTemplateIDBuildsBuildIDStatus(c *gin.Context, tem
 
 	// Needs to be before logs request so the status is not set to done too early
 	result := api.TemplateBuild{
+		LogEntries: nil,
 		Logs:       nil,
 		TemplateID: templateID,
 		BuildID:    buildID,
 		Status:     getCorrespondingTemplateBuildStatus(buildInfo.BuildStatus),
-		Reason:     buildInfo.Reason,
+		Reason:     getAPIReason(buildInfo.Reason),
 	}
 
 	cli, err := a.templateManager.GetBuildClient(team.ClusterID, buildInfo.ClusterNodeID, false)
@@ -119,6 +122,17 @@ func getCorrespondingTemplateBuildStatus(s envbuild.Status) api.TemplateBuildSta
 		return api.TemplateBuildStatusReady
 	default:
 		return api.TemplateBuildStatusBuilding
+	}
+}
+
+func getAPIReason(reason *schema.BuildReason) *api.BuildStatusReason {
+	if reason == nil {
+		return nil
+	}
+
+	return &api.BuildStatusReason{
+		Message: reason.Message,
+		Step:    reason.Step,
 	}
 }
 

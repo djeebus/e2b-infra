@@ -1,10 +1,6 @@
 package feature_flags
 
 import (
-	"runtime"
-
-	"github.com/shirou/gopsutil/v4/mem"
-
 	"github.com/e2b-dev/infra/packages/shared/pkg/env"
 )
 
@@ -13,8 +9,9 @@ import (
 type BoolFlag string
 
 const (
-	MetricsWriteFlagName BoolFlag = "sandbox-metrics-write"
-	MetricsReadFlagName  BoolFlag = "sandbox-metrics-read"
+	MetricsWriteFlagName                BoolFlag = "sandbox-metrics-write"
+	MetricsReadFlagName                 BoolFlag = "sandbox-metrics-read"
+	SandboxLifeCycleEventsWriteFlagName BoolFlag = "sandbox-lifecycle-events-write"
 )
 
 type IntFlag string
@@ -22,36 +19,27 @@ type IntFlag string
 const (
 	// GcloudConcurrentUploadLimit - the maximum number of concurrent uploads to GCloud
 	GcloudConcurrentUploadLimit IntFlag = "gcloud-concurrent-upload-limit"
-	// GcloudMaxCPUQuota - maximum number of CPUs for GCloud uploads
-	GcloudMaxCPUQuota IntFlag = "gcloud-max-cpu-quota"
-	// GcloudMaxMemoryLimitMiB - maximum memory limit for GCloud uploads
-	GcloudMaxMemoryLimitMiB IntFlag = "gcloud-max-memory-limit"
 	// GcloudMaxTasks - maximum concurrent tasks for GCloud uploads
 	GcloudMaxTasks IntFlag = "gcloud-max-tasks"
+	// ClickhouseMaxBatchSize - maximum number of sandbox events to batch before flushing
+	ClickhouseBatcherMaxBatchSize IntFlag = "clickhouse-batcher-max-batch-size"
+	// ClickhouseMaxDelay - maximum time to wait for a batch to fill up before flushing it,
+	// even if the batch size hasn't reached ClickhouseMaxBatchSize
+	ClickhouseBatcherMaxDelay IntFlag = "clickhouse-batcher-max-delay"
+	// ClickhouseQueueSize - size of the channel buffer used to queue incoming sandbox events
+	ClickhouseBatcherQueueSize IntFlag = "clickhouse-batcher-queue-size"
 )
 
 var flagsBool = map[BoolFlag]bool{
-	MetricsWriteFlagName: env.IsDevelopment(),
-	MetricsReadFlagName:  env.IsDevelopment(),
+	MetricsWriteFlagName:                env.IsDevelopment(),
+	MetricsReadFlagName:                 env.IsDevelopment(),
+	SandboxLifeCycleEventsWriteFlagName: env.IsDevelopment(),
 }
 
 var flagsInt = map[IntFlag]int{
-	GcloudConcurrentUploadLimit: 8,
-	// gcloudMaxCPUQuotaDefault default is 2% of total CPU (100% is 1 CPU core)
-	GcloudMaxCPUQuota: 2 * runtime.NumCPU(),
-	// gcloudMaxMemoryLimitMiBDefault default is 0.5% of total memory
-	GcloudMaxMemoryLimitMiB: getDefaultMemoryLimitMiB(),
-	GcloudMaxTasks:          16,
-}
-
-// getDefaultMemoryLimitMiB returns the default memory limit for GCloud uploads in MiB
-func getDefaultMemoryLimitMiB() int {
-	vmStat, err := mem.VirtualMemory()
-	if err != nil {
-		panic(err)
-	}
-
-	totalMemory := vmStat.Total
-	// Calculate the memory limit based on the percentage
-	return int(0.005 * float64(totalMemory) / 1024 / 1024) // Convert to MiB
+	GcloudConcurrentUploadLimit:   8,
+	GcloudMaxTasks:                16,
+	ClickhouseBatcherMaxBatchSize: 64 * 1024, // 65536
+	ClickhouseBatcherMaxDelay:     100,       // 100ms in milliseconds
+	ClickhouseBatcherQueueSize:    8 * 1024,  // 8192
 }

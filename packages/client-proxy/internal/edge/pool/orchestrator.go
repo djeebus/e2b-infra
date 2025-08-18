@@ -45,10 +45,10 @@ type OrchestratorInstanceInfo struct {
 }
 
 type OrchestratorInstance struct {
-	MetricVCpuUsed         atomic.Int64
-	MetricMemoryUsedInMB   atomic.Int64
-	MetricDiskUsedInMB     atomic.Int64
-	MetricSandboxesRunning atomic.Int64
+	MetricVCpuUsed         atomic.Uint32
+	MetricMemoryUsedBytes  atomic.Uint64
+	MetricDiskUsedBytes    atomic.Uint64
+	MetricSandboxesRunning atomic.Uint32
 
 	client *OrchestratorGRPCClient
 	info   OrchestratorInstanceInfo
@@ -85,7 +85,7 @@ func (o *OrchestratorInstance) sync(ctx context.Context) error {
 
 		status, err := o.client.Info.ServiceInfo(ctx, &emptypb.Empty{})
 		if err != nil {
-			zap.L().Error("failed to check orchestrator health", l.WithClusterNodeID(freshInfo.NodeID), zap.Error(err))
+			zap.L().Error("failed to check orchestrator health", l.WithNodeID(freshInfo.NodeID), zap.Error(err))
 			continue
 		}
 
@@ -99,9 +99,9 @@ func (o *OrchestratorInstance) sync(ctx context.Context) error {
 		o.setInfo(freshInfo)
 
 		o.MetricSandboxesRunning.Store(status.MetricSandboxesRunning)
-		o.MetricMemoryUsedInMB.Store(status.MetricMemoryUsedMb)
-		o.MetricDiskUsedInMB.Store(status.MetricDiskMb)
-		o.MetricVCpuUsed.Store(status.MetricVcpuUsed)
+		o.MetricMemoryUsedBytes.Store(status.MetricMemoryUsedBytes)
+		o.MetricDiskUsedBytes.Store(status.MetricDiskAllocatedBytes)
+		o.MetricVCpuUsed.Store(status.MetricCpuCount)
 
 		return nil
 	}
@@ -148,11 +148,11 @@ func (o *OrchestratorInstance) Close() error {
 
 func getMappedStatus(s e2bgrpcorchestratorinfo.ServiceInfoStatus) OrchestratorStatus {
 	switch s {
-	case e2bgrpcorchestratorinfo.ServiceInfoStatus_OrchestratorHealthy:
+	case e2bgrpcorchestratorinfo.ServiceInfoStatus_Healthy:
 		return OrchestratorStatusHealthy
-	case e2bgrpcorchestratorinfo.ServiceInfoStatus_OrchestratorDraining:
+	case e2bgrpcorchestratorinfo.ServiceInfoStatus_Draining:
 		return OrchestratorStatusDraining
-	case e2bgrpcorchestratorinfo.ServiceInfoStatus_OrchestratorUnhealthy:
+	case e2bgrpcorchestratorinfo.ServiceInfoStatus_Unhealthy:
 		return OrchestratorStatusUnhealthy
 	}
 

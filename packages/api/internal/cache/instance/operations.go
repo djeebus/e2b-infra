@@ -18,11 +18,7 @@ func (c *InstanceCache) CountForTeam(teamID uuid.UUID) (count uint) {
 	for _, item := range c.cache.Items() {
 		currentTeamID := item.TeamID
 
-		if currentTeamID == nil {
-			continue
-		}
-
-		if *currentTeamID == teamID {
+		if currentTeamID == teamID {
 			count++
 		}
 	}
@@ -49,7 +45,7 @@ func (c *InstanceCache) GetInstances(teamID *uuid.UUID) (instances []*InstanceIn
 	for _, item := range c.cache.Items() {
 		currentTeamID := item.TeamID
 
-		if teamID == nil || *currentTeamID == *teamID {
+		if teamID == nil || currentTeamID == *teamID {
 			instances = append(instances, item)
 		}
 	}
@@ -67,41 +63,37 @@ func (c *InstanceCache) Add(ctx context.Context, instance *InstanceInfo, newlyCr
 		zap.Time("end_time", instance.GetEndTime()),
 	)
 
-	if instance.Instance == nil {
-		return fmt.Errorf("instance doesn't contain info about inself")
-	}
-
-	if instance.Instance.SandboxID == "" {
+	if instance.SandboxID == "" {
 		return fmt.Errorf("instance is missing sandbox ID")
 	}
 
-	if instance.TeamID == nil {
-		return fmt.Errorf("instance %s is missing team ID", instance.Instance.SandboxID)
+	if instance.TeamID == uuid.Nil {
+		return fmt.Errorf("instance %s is missing team ID", instance.SandboxID)
 	}
 
-	if instance.Instance.ClientID == "" {
-		return fmt.Errorf("instance %s is missing client ID", instance.Instance.ClientID)
+	if instance.ClientID == "" {
+		return fmt.Errorf("instance %s is missing client ID", instance.ClientID)
 	}
 
-	if instance.Instance.TemplateID == "" {
-		return fmt.Errorf("instance %s is missing env ID", instance.Instance.TemplateID)
+	if instance.TemplateID == "" {
+		return fmt.Errorf("instance %s is missing env ID", instance.TemplateID)
 	}
 
 	endTime := instance.GetEndTime()
 
 	if instance.StartTime.IsZero() || endTime.IsZero() || instance.StartTime.After(endTime) {
-		return fmt.Errorf("instance %s has invalid start(%s)/end(%s) times", instance.Instance.SandboxID, instance.StartTime, endTime)
+		return fmt.Errorf("instance %s has invalid start(%s)/end(%s) times", instance.SandboxID, instance.StartTime, endTime)
 	}
 
 	if endTime.Sub(instance.StartTime) > instance.MaxInstanceLength {
 		instance.SetEndTime(instance.StartTime.Add(instance.MaxInstanceLength))
 	}
 
-	c.Set(instance.Instance.SandboxID, instance, newlyCreated)
+	c.Set(instance.SandboxID, instance, newlyCreated)
 	c.UpdateCounters(ctx, instance, 1, newlyCreated)
 
 	// Release the reservation if it exists
-	c.reservations.release(instance.Instance.SandboxID)
+	c.reservations.release(instance.SandboxID)
 
 	return nil
 }

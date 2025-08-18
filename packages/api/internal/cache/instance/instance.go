@@ -12,7 +12,6 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
-	"github.com/e2b-dev/infra/packages/api/internal/api"
 	"github.com/e2b-dev/infra/packages/api/internal/node"
 	sbxlogger "github.com/e2b-dev/infra/packages/shared/pkg/logger/sandbox"
 	"github.com/e2b-dev/infra/packages/shared/pkg/smap"
@@ -29,10 +28,13 @@ const (
 var ErrPausingInstanceNotFound = errors.New("pausing instance not found")
 
 func NewInstanceInfo(
-	Instance *api.Sandbox,
+	SandboxID string,
+	TemplateID string,
+	ClientID string,
+	Alias *string,
 	ExecutionID string,
-	TeamID *uuid.UUID,
-	BuildID *uuid.UUID,
+	TeamID uuid.UUID,
+	BuildID uuid.UUID,
 	Metadata map[string]string,
 	MaxInstanceLength time.Duration,
 	StartTime time.Time,
@@ -46,29 +48,35 @@ func NewInstanceInfo(
 	Node *node.NodeInfo,
 	AutoPause bool,
 	EnvdAccessToken *string,
+	allowInternetAccess *bool,
 	BaseTemplateID string,
 ) *InstanceInfo {
 	instance := &InstanceInfo{
-		Instance:           Instance,
-		ExecutionID:        ExecutionID,
-		TeamID:             TeamID,
-		BuildID:            BuildID,
-		Metadata:           Metadata,
-		MaxInstanceLength:  MaxInstanceLength,
-		StartTime:          StartTime,
-		endTime:            endTime,
-		VCpu:               VCpu,
-		TotalDiskSizeMB:    TotalDiskSizeMB,
-		RamMB:              RamMB,
-		KernelVersion:      KernelVersion,
-		FirecrackerVersion: FirecrackerVersion,
-		EnvdVersion:        EnvdVersion,
-		EnvdAccessToken:    EnvdAccessToken,
-		Node:               Node,
-		AutoPause:          atomic.Bool{},
-		Pausing:            utils.NewSetOnce[*node.NodeInfo](),
-		BaseTemplateID:     BaseTemplateID,
-		mu:                 sync.RWMutex{},
+		SandboxID:  SandboxID,
+		TemplateID: TemplateID,
+		ClientID:   ClientID,
+		Alias:      Alias,
+
+		ExecutionID:         ExecutionID,
+		TeamID:              TeamID,
+		BuildID:             BuildID,
+		Metadata:            Metadata,
+		MaxInstanceLength:   MaxInstanceLength,
+		StartTime:           StartTime,
+		endTime:             endTime,
+		VCpu:                VCpu,
+		TotalDiskSizeMB:     TotalDiskSizeMB,
+		RamMB:               RamMB,
+		KernelVersion:       KernelVersion,
+		FirecrackerVersion:  FirecrackerVersion,
+		EnvdVersion:         EnvdVersion,
+		EnvdAccessToken:     EnvdAccessToken,
+		AllowInternetAccess: allowInternetAccess,
+		Node:                Node,
+		AutoPause:           atomic.Bool{},
+		Pausing:             utils.NewSetOnce[*node.NodeInfo](),
+		BaseTemplateID:      BaseTemplateID,
+		mu:                  sync.RWMutex{},
 	}
 
 	instance.AutoPause.Store(AutoPause)
@@ -77,32 +85,37 @@ func NewInstanceInfo(
 }
 
 type InstanceInfo struct {
-	Instance           *api.Sandbox
-	ExecutionID        string
-	TeamID             *uuid.UUID
-	BuildID            *uuid.UUID
-	BaseTemplateID     string
-	Metadata           map[string]string
-	MaxInstanceLength  time.Duration
-	StartTime          time.Time
-	endTime            time.Time
-	VCpu               int64
-	TotalDiskSizeMB    int64
-	RamMB              int64
-	KernelVersion      string
-	FirecrackerVersion string
-	EnvdVersion        string
-	EnvdAccessToken    *string
-	Node               *node.NodeInfo
-	AutoPause          atomic.Bool
-	Pausing            *utils.SetOnce[*node.NodeInfo]
-	mu                 sync.RWMutex
+	SandboxID  string
+	TemplateID string
+	ClientID   string
+	Alias      *string
+
+	ExecutionID         string
+	TeamID              uuid.UUID
+	BuildID             uuid.UUID
+	BaseTemplateID      string
+	Metadata            map[string]string
+	MaxInstanceLength   time.Duration
+	StartTime           time.Time
+	endTime             time.Time
+	VCpu                int64
+	TotalDiskSizeMB     int64
+	RamMB               int64
+	KernelVersion       string
+	FirecrackerVersion  string
+	EnvdVersion         string
+	EnvdAccessToken     *string
+	AllowInternetAccess *bool
+	Node                *node.NodeInfo
+	AutoPause           atomic.Bool
+	Pausing             *utils.SetOnce[*node.NodeInfo]
+	mu                  sync.RWMutex
 }
 
 func (i *InstanceInfo) LoggerMetadata() sbxlogger.SandboxMetadata {
 	return sbxlogger.SandboxMetadata{
-		SandboxID:  i.Instance.SandboxID,
-		TemplateID: i.Instance.TemplateID,
+		SandboxID:  i.SandboxID,
+		TemplateID: i.TemplateID,
 		TeamID:     i.TeamID.String(),
 	}
 }
@@ -207,12 +220,12 @@ func (c *InstanceCache) Set(key string, value *InstanceInfo, created bool) {
 
 func (c *InstanceCache) MarkAsPausing(instanceInfo *InstanceInfo) {
 	if instanceInfo.AutoPause.Load() {
-		c.pausing.InsertIfAbsent(instanceInfo.Instance.SandboxID, instanceInfo)
+		c.pausing.InsertIfAbsent(instanceInfo.SandboxID, instanceInfo)
 	}
 }
 
 func (c *InstanceCache) UnmarkAsPausing(instanceInfo *InstanceInfo) {
-	c.pausing.RemoveCb(instanceInfo.Instance.SandboxID, func(key string, v *InstanceInfo, exists bool) bool {
+	c.pausing.RemoveCb(instanceInfo.SandboxID, func(key string, v *InstanceInfo, exists bool) bool {
 		if !exists {
 			return false
 		}

@@ -107,6 +107,20 @@ func (su *SnapshotUpdate) SetNillableEnvSecure(b *bool) *SnapshotUpdate {
 	return su
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (su *SnapshotUpdate) SetAutoPause(b bool) *SnapshotUpdate {
+	su.mutation.SetAutoPause(b)
+	return su
+}
+
+// SetNillableAutoPause sets the "auto_pause" field if the given value is not nil.
+func (su *SnapshotUpdate) SetNillableAutoPause(b *bool) *SnapshotUpdate {
+	if b != nil {
+		su.SetAutoPause(*b)
+	}
+	return su
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (su *SnapshotUpdate) SetOriginNodeID(s string) *SnapshotUpdate {
 	su.mutation.SetOriginNodeID(s)
@@ -118,6 +132,26 @@ func (su *SnapshotUpdate) SetNillableOriginNodeID(s *string) *SnapshotUpdate {
 	if s != nil {
 		su.SetOriginNodeID(*s)
 	}
+	return su
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (su *SnapshotUpdate) SetAllowInternetAccess(b bool) *SnapshotUpdate {
+	su.mutation.SetAllowInternetAccess(b)
+	return su
+}
+
+// SetNillableAllowInternetAccess sets the "allow_internet_access" field if the given value is not nil.
+func (su *SnapshotUpdate) SetNillableAllowInternetAccess(b *bool) *SnapshotUpdate {
+	if b != nil {
+		su.SetAllowInternetAccess(*b)
+	}
+	return su
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (su *SnapshotUpdate) ClearAllowInternetAccess() *SnapshotUpdate {
+	su.mutation.ClearAllowInternetAccess()
 	return su
 }
 
@@ -205,8 +239,17 @@ func (su *SnapshotUpdate) sqlSave(ctx context.Context) (n int, err error) {
 	if value, ok := su.mutation.EnvSecure(); ok {
 		_spec.SetField(snapshot.FieldEnvSecure, field.TypeBool, value)
 	}
+	if value, ok := su.mutation.AutoPause(); ok {
+		_spec.SetField(snapshot.FieldAutoPause, field.TypeBool, value)
+	}
 	if value, ok := su.mutation.OriginNodeID(); ok {
 		_spec.SetField(snapshot.FieldOriginNodeID, field.TypeString, value)
+	}
+	if value, ok := su.mutation.AllowInternetAccess(); ok {
+		_spec.SetField(snapshot.FieldAllowInternetAccess, field.TypeBool, value)
+	}
+	if su.mutation.AllowInternetAccessCleared() {
+		_spec.ClearField(snapshot.FieldAllowInternetAccess, field.TypeBool)
 	}
 	if su.mutation.EnvCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -339,6 +382,20 @@ func (suo *SnapshotUpdateOne) SetNillableEnvSecure(b *bool) *SnapshotUpdateOne {
 	return suo
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (suo *SnapshotUpdateOne) SetAutoPause(b bool) *SnapshotUpdateOne {
+	suo.mutation.SetAutoPause(b)
+	return suo
+}
+
+// SetNillableAutoPause sets the "auto_pause" field if the given value is not nil.
+func (suo *SnapshotUpdateOne) SetNillableAutoPause(b *bool) *SnapshotUpdateOne {
+	if b != nil {
+		suo.SetAutoPause(*b)
+	}
+	return suo
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (suo *SnapshotUpdateOne) SetOriginNodeID(s string) *SnapshotUpdateOne {
 	suo.mutation.SetOriginNodeID(s)
@@ -350,6 +407,26 @@ func (suo *SnapshotUpdateOne) SetNillableOriginNodeID(s *string) *SnapshotUpdate
 	if s != nil {
 		suo.SetOriginNodeID(*s)
 	}
+	return suo
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (suo *SnapshotUpdateOne) SetAllowInternetAccess(b bool) *SnapshotUpdateOne {
+	suo.mutation.SetAllowInternetAccess(b)
+	return suo
+}
+
+// SetNillableAllowInternetAccess sets the "allow_internet_access" field if the given value is not nil.
+func (suo *SnapshotUpdateOne) SetNillableAllowInternetAccess(b *bool) *SnapshotUpdateOne {
+	if b != nil {
+		suo.SetAllowInternetAccess(*b)
+	}
+	return suo
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (suo *SnapshotUpdateOne) ClearAllowInternetAccess() *SnapshotUpdateOne {
+	suo.mutation.ClearAllowInternetAccess()
 	return suo
 }
 
@@ -467,8 +544,17 @@ func (suo *SnapshotUpdateOne) sqlSave(ctx context.Context) (_node *Snapshot, err
 	if value, ok := suo.mutation.EnvSecure(); ok {
 		_spec.SetField(snapshot.FieldEnvSecure, field.TypeBool, value)
 	}
+	if value, ok := suo.mutation.AutoPause(); ok {
+		_spec.SetField(snapshot.FieldAutoPause, field.TypeBool, value)
+	}
 	if value, ok := suo.mutation.OriginNodeID(); ok {
 		_spec.SetField(snapshot.FieldOriginNodeID, field.TypeString, value)
+	}
+	if value, ok := suo.mutation.AllowInternetAccess(); ok {
+		_spec.SetField(snapshot.FieldAllowInternetAccess, field.TypeBool, value)
+	}
+	if suo.mutation.AllowInternetAccessCleared() {
+		_spec.ClearField(snapshot.FieldAllowInternetAccess, field.TypeBool)
 	}
 	if suo.mutation.EnvCleared() {
 		edge := &sqlgraph.EdgeSpec{

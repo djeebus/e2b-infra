@@ -87,9 +87,19 @@ func EnvSecure(v bool) predicate.Snapshot {
 	return predicate.Snapshot(sql.FieldEQ(FieldEnvSecure, v))
 }
 
+// AutoPause applies equality check predicate on the "auto_pause" field. It's identical to AutoPauseEQ.
+func AutoPause(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldEQ(FieldAutoPause, v))
+}
+
 // OriginNodeID applies equality check predicate on the "origin_node_id" field. It's identical to OriginNodeIDEQ.
 func OriginNodeID(v string) predicate.Snapshot {
 	return predicate.Snapshot(sql.FieldEQ(FieldOriginNodeID, v))
+}
+
+// AllowInternetAccess applies equality check predicate on the "allow_internet_access" field. It's identical to AllowInternetAccessEQ.
+func AllowInternetAccess(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldEQ(FieldAllowInternetAccess, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
@@ -377,6 +387,16 @@ func EnvSecureNEQ(v bool) predicate.Snapshot {
 	return predicate.Snapshot(sql.FieldNEQ(FieldEnvSecure, v))
 }
 
+// AutoPauseEQ applies the EQ predicate on the "auto_pause" field.
+func AutoPauseEQ(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldEQ(FieldAutoPause, v))
+}
+
+// AutoPauseNEQ applies the NEQ predicate on the "auto_pause" field.
+func AutoPauseNEQ(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldNEQ(FieldAutoPause, v))
+}
+
 // OriginNodeIDEQ applies the EQ predicate on the "origin_node_id" field.
 func OriginNodeIDEQ(v string) predicate.Snapshot {
 	return predicate.Snapshot(sql.FieldEQ(FieldOriginNodeID, v))
@@ -440,6 +460,26 @@ func OriginNodeIDEqualFold(v string) predicate.Snapshot {
 // OriginNodeIDContainsFold applies the ContainsFold predicate on the "origin_node_id" field.
 func OriginNodeIDContainsFold(v string) predicate.Snapshot {
 	return predicate.Snapshot(sql.FieldContainsFold(FieldOriginNodeID, v))
+}
+
+// AllowInternetAccessEQ applies the EQ predicate on the "allow_internet_access" field.
+func AllowInternetAccessEQ(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldEQ(FieldAllowInternetAccess, v))
+}
+
+// AllowInternetAccessNEQ applies the NEQ predicate on the "allow_internet_access" field.
+func AllowInternetAccessNEQ(v bool) predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldNEQ(FieldAllowInternetAccess, v))
+}
+
+// AllowInternetAccessIsNil applies the IsNil predicate on the "allow_internet_access" field.
+func AllowInternetAccessIsNil() predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldIsNull(FieldAllowInternetAccess))
+}
+
+// AllowInternetAccessNotNil applies the NotNil predicate on the "allow_internet_access" field.
+func AllowInternetAccessNotNil() predicate.Snapshot {
+	return predicate.Snapshot(sql.FieldNotNull(FieldAllowInternetAccess))
 }
 
 // HasEnv applies the HasEdge predicate on the "env" edge.

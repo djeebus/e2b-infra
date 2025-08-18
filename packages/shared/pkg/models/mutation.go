@@ -23,6 +23,7 @@ import (
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/tier"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/user"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/usersteams"
+	"github.com/e2b-dev/infra/packages/shared/pkg/schema"
 	"github.com/google/uuid"
 )
 
@@ -3140,7 +3141,7 @@ type EnvBuildMutation struct {
 	firecracker_version   *string
 	envd_version          *string
 	cluster_node_id       *string
-	reason                *string
+	reason                **schema.BuildReason
 	clearedFields         map[string]struct{}
 	env                   *string
 	clearedenv            bool
@@ -4015,12 +4016,12 @@ func (m *EnvBuildMutation) ResetClusterNodeID() {
 }
 
 // SetReason sets the "reason" field.
-func (m *EnvBuildMutation) SetReason(s string) {
-	m.reason = &s
+func (m *EnvBuildMutation) SetReason(sr *schema.BuildReason) {
+	m.reason = &sr
 }
 
 // Reason returns the value of the "reason" field in the mutation.
-func (m *EnvBuildMutation) Reason() (r string, exists bool) {
+func (m *EnvBuildMutation) Reason() (r *schema.BuildReason, exists bool) {
 	v := m.reason
 	if v == nil {
 		return
@@ -4031,7 +4032,7 @@ func (m *EnvBuildMutation) Reason() (r string, exists bool) {
 // OldReason returns the old "reason" field's value of the EnvBuild entity.
 // If the EnvBuild object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *EnvBuildMutation) OldReason(ctx context.Context) (v *string, err error) {
+func (m *EnvBuildMutation) OldReason(ctx context.Context) (v *schema.BuildReason, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldReason is only allowed on UpdateOne operations")
 	}
@@ -4383,7 +4384,7 @@ func (m *EnvBuildMutation) SetField(name string, value ent.Value) error {
 		m.SetClusterNodeID(v)
 		return nil
 	case envbuild.FieldReason:
-		v, ok := value.(string)
+		v, ok := value.(*schema.BuildReason)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
@@ -4678,22 +4679,24 @@ func (m *EnvBuildMutation) ResetEdge(name string) error {
 // SnapshotMutation represents an operation that mutates the Snapshot nodes in the graph.
 type SnapshotMutation struct {
 	config
-	op                 Op
-	typ                string
-	id                 *uuid.UUID
-	created_at         *time.Time
-	base_env_id        *string
-	sandbox_id         *string
-	metadata           *map[string]string
-	sandbox_started_at *time.Time
-	env_secure         *bool
-	origin_node_id     *string
-	clearedFields      map[string]struct{}
-	env                *string
-	clearedenv         bool
-	done               bool
-	oldValue           func(context.Context) (*Snapshot, error)
-	predicates         []predicate.Snapshot
+	op                    Op
+	typ                   string
+	id                    *uuid.UUID
+	created_at            *time.Time
+	base_env_id           *string
+	sandbox_id            *string
+	metadata              *map[string]string
+	sandbox_started_at    *time.Time
+	env_secure            *bool
+	auto_pause            *bool
+	origin_node_id        *string
+	allow_internet_access *bool
+	clearedFields         map[string]struct{}
+	env                   *string
+	clearedenv            bool
+	done                  bool
+	oldValue              func(context.Context) (*Snapshot, error)
+	predicates            []predicate.Snapshot
 }
 
 var _ ent.Mutation = (*SnapshotMutation)(nil)
@@ -5052,6 +5055,42 @@ func (m *SnapshotMutation) ResetEnvSecure() {
 	m.env_secure = nil
 }
 
+// SetAutoPause sets the "auto_pause" field.
+func (m *SnapshotMutation) SetAutoPause(b bool) {
+	m.auto_pause = &b
+}
+
+// AutoPause returns the value of the "auto_pause" field in the mutation.
+func (m *SnapshotMutation) AutoPause() (r bool, exists bool) {
+	v := m.auto_pause
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAutoPause returns the old "auto_pause" field's value of the Snapshot entity.
+// If the Snapshot object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SnapshotMutation) OldAutoPause(ctx context.Context) (v bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAutoPause is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAutoPause requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAutoPause: %w", err)
+	}
+	return oldValue.AutoPause, nil
+}
+
+// ResetAutoPause resets all changes to the "auto_pause" field.
+func (m *SnapshotMutation) ResetAutoPause() {
+	m.auto_pause = nil
+}
+
 // SetOriginNodeID sets the "origin_node_id" field.
 func (m *SnapshotMutation) SetOriginNodeID(s string) {
 	m.origin_node_id = &s
@@ -5086,6 +5125,55 @@ func (m *SnapshotMutation) OldOriginNodeID(ctx context.Context) (v string, err e
 // ResetOriginNodeID resets all changes to the "origin_node_id" field.
 func (m *SnapshotMutation) ResetOriginNodeID() {
 	m.origin_node_id = nil
+}
+
+// SetAllowInternetAccess sets the "allow_internet_access" field.
+func (m *SnapshotMutation) SetAllowInternetAccess(b bool) {
+	m.allow_internet_access = &b
+}
+
+// AllowInternetAccess returns the value of the "allow_internet_access" field in the mutation.
+func (m *SnapshotMutation) AllowInternetAccess() (r bool, exists bool) {
+	v := m.allow_internet_access
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAllowInternetAccess returns the old "allow_internet_access" field's value of the Snapshot entity.
+// If the Snapshot object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *SnapshotMutation) OldAllowInternetAccess(ctx context.Context) (v *bool, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAllowInternetAccess is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAllowInternetAccess requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAllowInternetAccess: %w", err)
+	}
+	return oldValue.AllowInternetAccess, nil
+}
+
+// ClearAllowInternetAccess clears the value of the "allow_internet_access" field.
+func (m *SnapshotMutation) ClearAllowInternetAccess() {
+	m.allow_internet_access = nil
+	m.clearedFields[snapshot.FieldAllowInternetAccess] = struct{}{}
+}
+
+// AllowInternetAccessCleared returns if the "allow_internet_access" field was cleared in this mutation.
+func (m *SnapshotMutation) AllowInternetAccessCleared() bool {
+	_, ok := m.clearedFields[snapshot.FieldAllowInternetAccess]
+	return ok
+}
+
+// ResetAllowInternetAccess resets all changes to the "allow_internet_access" field.
+func (m *SnapshotMutation) ResetAllowInternetAccess() {
+	m.allow_internet_access = nil
+	delete(m.clearedFields, snapshot.FieldAllowInternetAccess)
 }
 
 // ClearEnv clears the "env" edge to the Env entity.
@@ -5149,7 +5237,7 @@ func (m *SnapshotMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *SnapshotMutation) Fields() []string {
-	fields := make([]string, 0, 8)
+	fields := make([]string, 0, 10)
 	if m.created_at != nil {
 		fields = append(fields, snapshot.FieldCreatedAt)
 	}
@@ -5171,8 +5259,14 @@ func (m *SnapshotMutation) Fields() []string {
 	if m.env_secure != nil {
 		fields = append(fields, snapshot.FieldEnvSecure)
 	}
+	if m.auto_pause != nil {
+		fields = append(fields, snapshot.FieldAutoPause)
+	}
 	if m.origin_node_id != nil {
 		fields = append(fields, snapshot.FieldOriginNodeID)
+	}
+	if m.allow_internet_access != nil {
+		fields = append(fields, snapshot.FieldAllowInternetAccess)
 	}
 	return fields
 }
@@ -5196,8 +5290,12 @@ func (m *SnapshotMutation) Field(name string) (ent.Value, bool) {
 		return m.SandboxStartedAt()
 	case snapshot.FieldEnvSecure:
 		return m.EnvSecure()
+	case snapshot.FieldAutoPause:
+		return m.AutoPause()
 	case snapshot.FieldOriginNodeID:
 		return m.OriginNodeID()
+	case snapshot.FieldAllowInternetAccess:
+		return m.AllowInternetAccess()
 	}
 	return nil, false
 }
@@ -5221,8 +5319,12 @@ func (m *SnapshotMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldSandboxStartedAt(ctx)
 	case snapshot.FieldEnvSecure:
 		return m.OldEnvSecure(ctx)
+	case snapshot.FieldAutoPause:
+		return m.OldAutoPause(ctx)
 	case snapshot.FieldOriginNodeID:
 		return m.OldOriginNodeID(ctx)
+	case snapshot.FieldAllowInternetAccess:
+		return m.OldAllowInternetAccess(ctx)
 	}
 	return nil, fmt.Errorf("unknown Snapshot field %s", name)
 }
@@ -5281,12 +5383,26 @@ func (m *SnapshotMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetEnvSecure(v)
 		return nil
+	case snapshot.FieldAutoPause:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAutoPause(v)
+		return nil
 	case snapshot.FieldOriginNodeID:
 		v, ok := value.(string)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetOriginNodeID(v)
+		return nil
+	case snapshot.FieldAllowInternetAccess:
+		v, ok := value.(bool)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAllowInternetAccess(v)
 		return nil
 	}
 	return fmt.Errorf("unknown Snapshot field %s", name)
@@ -5317,7 +5433,11 @@ func (m *SnapshotMutation) AddField(name string, value ent.Value) error {
 // ClearedFields returns all nullable fields that were cleared during this
 // mutation.
 func (m *SnapshotMutation) ClearedFields() []string {
-	return nil
+	var fields []string
+	if m.FieldCleared(snapshot.FieldAllowInternetAccess) {
+		fields = append(fields, snapshot.FieldAllowInternetAccess)
+	}
+	return fields
 }
 
 // FieldCleared returns a boolean indicating if a field with the given name was
@@ -5330,6 +5450,11 @@ func (m *SnapshotMutation) FieldCleared(name string) bool {
 // ClearField clears the value of the field with the given name. It returns an
 // error if the field is not defined in the schema.
 func (m *SnapshotMutation) ClearField(name string) error {
+	switch name {
+	case snapshot.FieldAllowInternetAccess:
+		m.ClearAllowInternetAccess()
+		return nil
+	}
 	return fmt.Errorf("unknown Snapshot nullable field %s", name)
 }
 
@@ -5358,8 +5483,14 @@ func (m *SnapshotMutation) ResetField(name string) error {
 	case snapshot.FieldEnvSecure:
 		m.ResetEnvSecure()
 		return nil
+	case snapshot.FieldAutoPause:
+		m.ResetAutoPause()
+		return nil
 	case snapshot.FieldOriginNodeID:
 		m.ResetOriginNodeID()
+		return nil
+	case snapshot.FieldAllowInternetAccess:
+		m.ResetAllowInternetAccess()
 		return nil
 	}
 	return fmt.Errorf("unknown Snapshot field %s", name)

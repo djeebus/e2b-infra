@@ -2,6 +2,7 @@ package sandboxtools
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -22,12 +23,55 @@ import (
 const commandTimeout = 600 * time.Second
 
 type CommandMetadata struct {
-	User    string
-	WorkDir *string
-	EnvVars map[string]string
+	User    string            `json:"user,omitempty"`
+	WorkDir *string           `json:"workdir,omitempty"`
+	EnvVars map[string]string `json:"env_vars,omitempty"`
+}
+
+func RunCommandWithOutput(
+	ctx context.Context,
+	tracer trace.Tracer,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	command string,
+	metadata CommandMetadata,
+	processOutput func(stdout, stderr string),
+) error {
+	return runCommandWithAllOptions(
+		ctx,
+		tracer,
+		proxy,
+		sandboxID,
+		command,
+		metadata,
+		// No confirmation needed for this command
+		make(chan struct{}),
+		processOutput,
+	)
 }
 
 func RunCommand(
+	ctx context.Context,
+	tracer trace.Tracer,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	command string,
+	metadata CommandMetadata,
+) error {
+	return runCommandWithAllOptions(
+		ctx,
+		tracer,
+		proxy,
+		sandboxID,
+		command,
+		metadata,
+		// No confirmation needed for this command
+		make(chan struct{}),
+		func(stdout, stderr string) {},
+	)
+}
+
+func RunCommandWithLogger(
 	ctx context.Context,
 	tracer trace.Tracer,
 	proxy *proxy.SandboxProxy,
@@ -64,6 +108,31 @@ func RunCommandWithConfirmation(
 	command string,
 	metadata CommandMetadata,
 	confirmCh chan<- struct{},
+) error {
+	return runCommandWithAllOptions(
+		ctx,
+		tracer,
+		proxy,
+		sandboxID,
+		command,
+		metadata,
+		confirmCh,
+		func(stdout, stderr string) {
+			logStream(postProcessor, lvl, id, "stdout", stdout)
+			logStream(postProcessor, zapcore.ErrorLevel, id, "stderr", stderr)
+		},
+	)
+}
+
+func runCommandWithAllOptions(
+	ctx context.Context,
+	tracer trace.Tracer,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+	command string,
+	metadata CommandMetadata,
+	confirmCh chan<- struct{},
+	processOutput func(stdout, stderr string),
 ) error {
 	runCmdReq := connect.NewRequest(&process.StartRequest{
 		Process: &process.ProcessConfig{
@@ -121,18 +190,16 @@ func RunCommandWithConfirmation(
 			switch {
 			case e.GetData() != nil:
 				data := e.GetData()
-				logStream(postProcessor, lvl, id, "stdout", string(data.GetStdout()))
-				logStream(postProcessor, zapcore.ErrorLevel, id, "stderr", string(data.GetStderr()))
+				processOutput(string(data.GetStdout()), string(data.GetStderr()))
 
 			case e.GetEnd() != nil:
 				end := e.GetEnd()
 				success := end.GetExitCode() == 0
 
 				if !success {
-					name := fmt.Sprintf("exit %d", end.GetExitCode())
-					logStream(postProcessor, zapcore.ErrorLevel, id, name, end.GetStatus())
+					processOutput("", end.GetStatus())
 
-					return fmt.Errorf("command failed: %s", end.GetStatus())
+					return errors.New(end.GetStatus())
 				}
 			}
 		}
@@ -153,4 +220,25 @@ func logStream(postProcessor *writer.PostProcessor, lvl zapcore.Level, id string
 			postProcessor.Log(lvl, msg)
 		}
 	}
+}
+
+// syncChangesToDisk synchronizes filesystem changes to the filesystem
+// This is useful to ensure that all changes made in the sandbox are written to disk
+// to be able to re-create the sandbox without resume.
+func SyncChangesToDisk(
+	ctx context.Context,
+	tracer trace.Tracer,
+	proxy *proxy.SandboxProxy,
+	sandboxID string,
+) error {
+	return RunCommand(
+		ctx,
+		tracer,
+		proxy,
+		sandboxID,
+		"sync",
+		CommandMetadata{
+			User: "root",
+		},
+	)
 }

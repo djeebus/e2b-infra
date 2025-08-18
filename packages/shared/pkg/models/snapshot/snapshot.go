@@ -28,8 +28,12 @@ const (
 	FieldSandboxStartedAt = "sandbox_started_at"
 	// FieldEnvSecure holds the string denoting the env_secure field in the database.
 	FieldEnvSecure = "env_secure"
+	// FieldAutoPause holds the string denoting the auto_pause field in the database.
+	FieldAutoPause = "auto_pause"
 	// FieldOriginNodeID holds the string denoting the origin_node_id field in the database.
 	FieldOriginNodeID = "origin_node_id"
+	// FieldAllowInternetAccess holds the string denoting the allow_internet_access field in the database.
+	FieldAllowInternetAccess = "allow_internet_access"
 	// EdgeEnv holds the string denoting the env edge name in mutations.
 	EdgeEnv = "env"
 	// Table holds the table name of the snapshot in the database.
@@ -53,7 +57,9 @@ var Columns = []string{
 	FieldMetadata,
 	FieldSandboxStartedAt,
 	FieldEnvSecure,
+	FieldAutoPause,
 	FieldOriginNodeID,
+	FieldAllowInternetAccess,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -71,6 +77,8 @@ var (
 	DefaultCreatedAt func() time.Time
 	// DefaultEnvSecure holds the default value on creation for the "env_secure" field.
 	DefaultEnvSecure bool
+	// DefaultAutoPause holds the default value on creation for the "auto_pause" field.
+	DefaultAutoPause bool
 )
 
 // OrderOption defines the ordering options for the Snapshot queries.
@@ -111,9 +119,19 @@ func ByEnvSecure(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldEnvSecure, opts...).ToFunc()
 }
 
+// ByAutoPause orders the results by the auto_pause field.
+func ByAutoPause(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAutoPause, opts...).ToFunc()
+}
+
 // ByOriginNodeID orders the results by the origin_node_id field.
 func ByOriginNodeID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldOriginNodeID, opts...).ToFunc()
+}
+
+// ByAllowInternetAccess orders the results by the allow_internet_access field.
+func ByAllowInternetAccess(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAllowInternetAccess, opts...).ToFunc()
 }
 
 // ByEnvField orders the results by env field.

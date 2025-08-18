@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/envbuild"
+	"github.com/e2b-dev/infra/packages/shared/pkg/schema"
 	"github.com/google/uuid"
 )
 
@@ -189,14 +190,6 @@ func (ebc *EnvBuildCreate) SetFirecrackerVersion(s string) *EnvBuildCreate {
 	return ebc
 }
 
-// SetNillableFirecrackerVersion sets the "firecracker_version" field if the given value is not nil.
-func (ebc *EnvBuildCreate) SetNillableFirecrackerVersion(s *string) *EnvBuildCreate {
-	if s != nil {
-		ebc.SetFirecrackerVersion(*s)
-	}
-	return ebc
-}
-
 // SetEnvdVersion sets the "envd_version" field.
 func (ebc *EnvBuildCreate) SetEnvdVersion(s string) *EnvBuildCreate {
 	ebc.mutation.SetEnvdVersion(s)
@@ -226,16 +219,8 @@ func (ebc *EnvBuildCreate) SetNillableClusterNodeID(s *string) *EnvBuildCreate {
 }
 
 // SetReason sets the "reason" field.
-func (ebc *EnvBuildCreate) SetReason(s string) *EnvBuildCreate {
-	ebc.mutation.SetReason(s)
-	return ebc
-}
-
-// SetNillableReason sets the "reason" field if the given value is not nil.
-func (ebc *EnvBuildCreate) SetNillableReason(s *string) *EnvBuildCreate {
-	if s != nil {
-		ebc.SetReason(*s)
-	}
+func (ebc *EnvBuildCreate) SetReason(sr *schema.BuildReason) *EnvBuildCreate {
+	ebc.mutation.SetReason(sr)
 	return ebc
 }
 
@@ -300,10 +285,6 @@ func (ebc *EnvBuildCreate) defaults() {
 	if _, ok := ebc.mutation.KernelVersion(); !ok {
 		v := envbuild.DefaultKernelVersion
 		ebc.mutation.SetKernelVersion(v)
-	}
-	if _, ok := ebc.mutation.FirecrackerVersion(); !ok {
-		v := envbuild.DefaultFirecrackerVersion
-		ebc.mutation.SetFirecrackerVersion(v)
 	}
 }
 
@@ -436,8 +417,8 @@ func (ebc *EnvBuildCreate) createSpec() (*EnvBuild, *sqlgraph.CreateSpec) {
 		_node.ClusterNodeID = &value
 	}
 	if value, ok := ebc.mutation.Reason(); ok {
-		_spec.SetField(envbuild.FieldReason, field.TypeString, value)
-		_node.Reason = &value
+		_spec.SetField(envbuild.FieldReason, field.TypeJSON, value)
+		_node.Reason = value
 	}
 	if nodes := ebc.mutation.EnvIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -762,7 +743,7 @@ func (u *EnvBuildUpsert) ClearClusterNodeID() *EnvBuildUpsert {
 }
 
 // SetReason sets the "reason" field.
-func (u *EnvBuildUpsert) SetReason(v string) *EnvBuildUpsert {
+func (u *EnvBuildUpsert) SetReason(v *schema.BuildReason) *EnvBuildUpsert {
 	u.Set(envbuild.FieldReason, v)
 	return u
 }
@@ -1125,7 +1106,7 @@ func (u *EnvBuildUpsertOne) ClearClusterNodeID() *EnvBuildUpsertOne {
 }
 
 // SetReason sets the "reason" field.
-func (u *EnvBuildUpsertOne) SetReason(v string) *EnvBuildUpsertOne {
+func (u *EnvBuildUpsertOne) SetReason(v *schema.BuildReason) *EnvBuildUpsertOne {
 	return u.Update(func(s *EnvBuildUpsert) {
 		s.SetReason(v)
 	})
@@ -1658,7 +1639,7 @@ func (u *EnvBuildUpsertBulk) ClearClusterNodeID() *EnvBuildUpsertBulk {
 }
 
 // SetReason sets the "reason" field.
-func (u *EnvBuildUpsertBulk) SetReason(v string) *EnvBuildUpsertBulk {
+func (u *EnvBuildUpsertBulk) SetReason(v *schema.BuildReason) *EnvBuildUpsertBulk {
 	return u.Update(func(s *EnvBuildUpsert) {
 		s.SetReason(v)
 	})

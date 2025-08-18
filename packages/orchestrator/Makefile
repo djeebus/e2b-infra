@@ -17,8 +17,11 @@ build:
 	$(eval COMMIT_SHA := $(shell git rev-parse --short HEAD))
 	@rm -rf .shared/
 	@cp -r ../shared .shared/
+	@rm -rf .clickhouse/
+	@cp -r ../clickhouse .clickhouse/
 	@docker build --platform linux/amd64 --output=bin --build-arg COMMIT_SHA="$(COMMIT_SHA)" .
 	@rm -rf .shared/
+	@rm -rf .clickhouse/
 
 .PHONY: build-local
 build-local:
@@ -41,6 +44,8 @@ run-debug:
 	ORCHESTRATOR_SERVICES=$(ORCHESTRATOR_SERVICES) \
 	GCP_DOCKER_REPOSITORY_NAME=$(GCP_DOCKER_REPOSITORY_NAME) \
 	GOOGLE_SERVICE_ACCOUNT_BASE64=$(GOOGLE_SERVICE_ACCOUNT_BASE64) \
+	OTEL_COLLECTOR_GRPC_ENDPOINT=$(OTEL_COLLECTOR_GRPC_ENDPOINT) \
+	MAX_PARALLEL_MEMFILE_SNAPSHOTTING=$(MAX_PARALLEL_MEMFILE_SNAPSHOTTING) \
 	./bin/orchestrator
 
 .PHONY: upload/orchestrator
@@ -71,7 +76,7 @@ mock-snapshot:
 
 .PHONY: test
 test:
-	go test -v ./...
+	go test -race -v ./...
 
 .PHONY: build-template
 build-template:

@@ -74,19 +74,21 @@ type EnvBuild struct {
 	EnvdVersion        *string
 	ReadyCmd           *string
 	ClusterNodeID      *string
-	Reason             *string
+	Reason             types.JSONBStringMap
 }
 
 type Snapshot struct {
-	CreatedAt        pgtype.Timestamptz
-	EnvID            string
-	SandboxID        string
-	ID               uuid.UUID
-	Metadata         types.JSONBStringMap
-	BaseEnvID        string
-	SandboxStartedAt pgtype.Timestamptz
-	EnvSecure        bool
-	OriginNodeID     *string
+	CreatedAt           pgtype.Timestamptz
+	EnvID               string
+	SandboxID           string
+	ID                  uuid.UUID
+	Metadata            types.JSONBStringMap
+	BaseEnvID           string
+	SandboxStartedAt    pgtype.Timestamptz
+	EnvSecure           bool
+	OriginNodeID        *string
+	AllowInternetAccess *bool
+	AutoPause           bool
 }
 
 type Team struct {

@@ -31,8 +31,9 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	if team.ClusterID != nil {
 		cluster, ok := a.clustersPool.GetClusterById(*team.ClusterID)
 		if !ok {
-			zap.L().Error("Sandbox attached cluster not found", logger.WithClusterID(*team.ClusterID))
-			c.JSON(http.StatusInternalServerError, fmt.Sprintf("cluster with id %s not found", *team.ClusterID))
+			telemetry.ReportCriticalError(ctx, fmt.Sprintf("cluster with ID '%s' not found", *team.ClusterID), nil)
+			a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("cluster with id %s not found", *team.ClusterID))
+
 			return
 		}
 
@@ -43,24 +44,26 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	info, err := a.orchestrator.GetInstance(ctx, sandboxId)
 	if err == nil {
 		// Check if sandbox belongs to the team
-		if *info.TeamID != team.ID {
-			zap.L().Warn("sandbox doesn't exist or you don't have access to it", logger.WithSandboxID(id))
-			c.JSON(http.StatusNotFound, fmt.Sprintf("sandbox \"%s\" doesn't exist or you don't have access to it", id))
+		if info.TeamID != team.ID {
+			telemetry.ReportCriticalError(ctx, fmt.Sprintf("sandbox '%s' doesn't belong to team '%s'", sandboxId, team.ID.String()), nil)
+			a.sendAPIStoreError(c, http.StatusNotFound, fmt.Sprintf("sandbox \"%s\" doesn't exist or you don't have access to it", id))
+
 			return
 		}
 
 		// Sandbox exists and belongs to the team - return running sandbox info
 		sandbox := api.SandboxDetail{
-			ClientID:        info.Instance.ClientID,
-			TemplateID:      info.Instance.TemplateID,
-			Alias:           info.Instance.Alias,
-			SandboxID:       info.Instance.SandboxID,
+			ClientID:        info.ClientID,
+			TemplateID:      info.TemplateID,
+			Alias:           info.Alias,
+			SandboxID:       info.SandboxID,
 			StartedAt:       info.StartTime,
 			CpuCount:        api.CPUCount(info.VCpu),
 			MemoryMB:        api.MemoryMB(info.RamMB),
+			DiskSizeMB:      api.DiskSizeMB(info.TotalDiskSizeMB),
 			EndAt:           info.GetEndTime(),
 			State:           api.Running,
-			EnvdVersion:     &info.EnvdVersion,
+			EnvdVersion:     info.EnvdVersion,
 			EnvdAccessToken: info.EnvdAccessToken,
 			Domain:          sbxDomain,
 		}
@@ -77,20 +80,38 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 	// If sandbox not found try to get the latest snapshot
 	lastSnapshot, err := a.sqlcDB.GetLastSnapshot(ctx, queries.GetLastSnapshotParams{SandboxID: sandboxId, TeamID: team.ID})
 	if err != nil {
-		zap.L().Warn("error getting last snapshot for sandbox", logger.WithSandboxID(id), zap.Error(err))
-		c.JSON(http.StatusNotFound, fmt.Sprintf("sandbox \"%s\" doesn't exist or you don't have access to it", id))
+		telemetry.ReportError(ctx, "error getting last snapshot", err)
+		a.sendAPIStoreError(c, http.StatusNotFound, fmt.Sprintf("sandbox \"%s\" doesn't exist or you don't have access to it", id))
+
 		return
 	}
 
 	memoryMB := int32(lastSnapshot.EnvBuild.RamMb)
 	cpuCount := int32(lastSnapshot.EnvBuild.Vcpu)
 
+	diskSize := int32(0)
+	if lastSnapshot.EnvBuild.TotalDiskSizeMb != nil {
+		diskSize = int32(*lastSnapshot.EnvBuild.TotalDiskSizeMb)
+	} else {
+		zap.L().Error("disk size is not set for the sandbox", logger.WithSandboxID(id))
+	}
+
+	// This shouldn't happen - if yes, the data are in corrupted state,
+	// still adding fallback to envd version v1.0.0 (should behave as if there are no features)
+	envdVersion := "v1.0.0"
+	if lastSnapshot.EnvBuild.EnvdVersion != nil {
+		envdVersion = *lastSnapshot.EnvBuild.EnvdVersion
+	} else {
+		zap.L().Error("envd version is not set for the sandbox", logger.WithSandboxID(id))
+	}
+
 	var sbxAccessToken *string = nil
 	if lastSnapshot.Snapshot.EnvSecure {
 		key, err := a.envdAccessTokenGenerator.GenerateAccessToken(lastSnapshot.Snapshot.SandboxID)
 		if err != nil {
-			zap.L().Error("error generating sandbox access token", logger.WithSandboxID(id), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, fmt.Sprintf("error generating sandbox access token: %s", err))
+			telemetry.ReportError(ctx, "error generating sandbox access token", err)
+			a.sendAPIStoreError(c, http.StatusInternalServerError, fmt.Sprintf("error generating sandbox access token: %s", err))
+
 			return
 		}
 
@@ -104,9 +125,10 @@ func (a *APIStore) GetSandboxesSandboxID(c *gin.Context, id string) {
 		StartedAt:       lastSnapshot.Snapshot.SandboxStartedAt.Time,
 		CpuCount:        cpuCount,
 		MemoryMB:        memoryMB,
+		DiskSizeMB:      diskSize,
 		EndAt:           lastSnapshot.Snapshot.CreatedAt.Time, // Snapshot is created when sandbox is paused
 		State:           api.Paused,
-		EnvdVersion:     lastSnapshot.EnvBuild.EnvdVersion,
+		EnvdVersion:     envdVersion,
 		EnvdAccessToken: sbxAccessToken,
 		Domain:          nil,
 	}

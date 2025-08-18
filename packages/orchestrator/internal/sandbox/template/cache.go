@@ -10,6 +10,7 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"go.uber.org/zap"
 
+	blockmetrics "github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/block/metrics"
 	"github.com/e2b-dev/infra/packages/orchestrator/internal/sandbox/build"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage"
 	"github.com/e2b-dev/infra/packages/shared/pkg/storage/header"
@@ -29,16 +30,17 @@ const (
 )
 
 type Cache struct {
-	cache       *ttlcache.Cache[string, Template]
-	persistence storage.StorageProvider
-	ctx         context.Context
-	buildStore  *build.DiffStore
+	cache        *ttlcache.Cache[string, Template]
+	persistence  storage.StorageProvider
+	ctx          context.Context
+	buildStore   *build.DiffStore
+	blockMetrics blockmetrics.Metrics
 }
 
 // NewCache initializes a template new cache.
 // It also deletes the old build cache directory content
 // as it may contain stale data that are not managed by anyone.
-func NewCache(ctx context.Context, persistence storage.StorageProvider) (*Cache, error) {
+func NewCache(ctx context.Context, persistence storage.StorageProvider, metrics blockmetrics.Metrics) (*Cache, error) {
 	cache := ttlcache.New(
 		ttlcache.WithTTL[string, Template](templateExpiration),
 	)
@@ -72,10 +74,11 @@ func NewCache(ctx context.Context, persistence storage.StorageProvider) (*Cache,
 	go cache.Start()
 
 	return &Cache{
-		persistence: persistence,
-		buildStore:  buildStore,
-		cache:       cache,
-		ctx:         ctx,
+		blockMetrics: metrics,
+		persistence:  persistence,
+		buildStore:   buildStore,
+		cache:        cache,
+		ctx:          ctx,
 	}, nil
 }
 
@@ -84,19 +87,18 @@ func (c *Cache) Items() map[string]*ttlcache.Item[string, Template] {
 }
 
 func (c *Cache) GetTemplate(
-	templateID,
 	buildID,
 	kernelVersion,
 	firecrackerVersion string,
 ) (Template, error) {
 	storageTemplate, err := newTemplateFromStorage(
-		templateID,
 		buildID,
 		kernelVersion,
 		firecrackerVersion,
 		nil,
 		nil,
 		c.persistence,
+		c.blockMetrics,
 		nil,
 	)
 	if err != nil {
@@ -117,7 +119,6 @@ func (c *Cache) GetTemplate(
 }
 
 func (c *Cache) AddSnapshot(
-	templateId,
 	buildId,
 	kernelVersion,
 	firecrackerVersion string,
@@ -142,13 +143,13 @@ func (c *Cache) AddSnapshot(
 	}
 
 	storageTemplate, err := newTemplateFromStorage(
-		templateId,
 		buildId,
 		kernelVersion,
 		firecrackerVersion,
 		memfileHeader,
 		rootfsHeader,
 		c.persistence,
+		c.blockMetrics,
 		localSnapfile,
 	)
 	if err != nil {

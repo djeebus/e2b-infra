@@ -6,12 +6,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.uber.org/zap"
 
+	"github.com/e2b-dev/infra/packages/shared/pkg/logger"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/env"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/envalias"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/envbuild"
 	"github.com/e2b-dev/infra/packages/shared/pkg/models/snapshot"
+	"github.com/e2b-dev/infra/packages/shared/pkg/schema"
 )
 
 type TemplateCreator struct {
@@ -34,6 +37,7 @@ type Template struct {
 	SpawnCount    int64
 	BuildCount    int32
 	CreatedBy     *TemplateCreator
+	EnvdVersion   string
 }
 
 type UpdateEnvInput struct {
@@ -91,13 +95,26 @@ func (db *DB) GetEnvs(ctx context.Context, teamID uuid.UUID) (result []*Template
 		}
 
 		build := item.Edges.Builds[0]
+
+		diskMB := int64(0)
+		if build.TotalDiskSizeMB != nil {
+			diskMB = *build.TotalDiskSizeMB
+		}
+
+		envdVersion := ""
+		if build.EnvdVersion != nil {
+			envdVersion = *build.EnvdVersion
+		} else {
+			zap.L().Error("failed to determine envd version", logger.WithTemplateID(item.ID))
+		}
+
 		result = append(result, &Template{
 			TemplateID:    item.ID,
 			TeamID:        item.TeamID,
 			BuildID:       build.ID.String(),
 			VCPU:          build.Vcpu,
 			RAMMB:         build.RAMMB,
-			DiskMB:        build.FreeDiskSizeMB,
+			DiskMB:        diskMB,
 			Public:        item.Public,
 			Aliases:       &aliases,
 			CreatedAt:     item.CreatedAt,
@@ -106,6 +123,7 @@ func (db *DB) GetEnvs(ctx context.Context, teamID uuid.UUID) (result []*Template
 			SpawnCount:    item.SpawnCount,
 			BuildCount:    item.BuildCount,
 			CreatedBy:     createdBy,
+			EnvdVersion:   envdVersion,
 		})
 	}
 
@@ -191,7 +209,7 @@ func (db *DB) FinishEnvBuild(
 		SetTotalDiskSizeMB(totalDiskSizeMB).
 		SetStatus(envbuild.StatusUploaded).
 		SetEnvdVersion(envdVersion).
-		SetNillableReason(nil).
+		SetReason(nil).
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to finish template build '%s': %w", buildID, err)
@@ -205,9 +223,13 @@ func (db *DB) EnvBuildSetStatus(
 	envID string,
 	buildID uuid.UUID,
 	status envbuild.Status,
+	reason *schema.BuildReason,
 ) error {
 	err := db.Client.EnvBuild.Update().Where(envbuild.ID(buildID), envbuild.EnvID(envID)).
-		SetStatus(status).SetFinishedAt(time.Now()).Exec(ctx)
+		SetStatus(status).
+		SetFinishedAt(time.Now()).
+		SetReason(reason).
+		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to set template build status %s for '%s': %w", status, buildID, err)
 	}
